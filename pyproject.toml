@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "professor-feathers-keyword"
+version = "0.1.0"
+description = "Hotkey-driven audio recording and sample collection pipeline"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "matplotlib>=3.8",
+  "numpy>=1.24",
+  "sounddevice>=0.4.6",
+  "pynput>=1.7.6",
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+pf-collect = "collect:main"
+pf-features = "features:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["audio", "collect", "config", "endpointer", "features", "storage"]
