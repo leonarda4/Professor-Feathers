@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
 
 from audio import read_wav
 from config import load_app_config
@@ -18,6 +20,12 @@ from storage import SampleRecord, read_manifest_records
 class SampleFeatures:
     record: SampleRecord
     vector: np.ndarray
+
+
+@dataclass
+class PcaResult:
+    coordinates: np.ndarray
+    explained_variance_ratio: np.ndarray
 
 
 def frame_signal(samples: np.ndarray, frame_size: int, hop_size: int) -> np.ndarray:
@@ -163,6 +171,8 @@ def compute_mfcc(
 
 def summarize_feature_vector(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     mfcc = compute_mfcc(samples, sample_rate=sample_rate)
+    mfcc_mean = np.mean(mfcc, axis=0, dtype=np.float64) if mfcc.size else np.zeros(13, dtype=np.float64)
+    mfcc_std = np.std(mfcc, axis=0, dtype=np.float64) if mfcc.size else np.zeros(13, dtype=np.float64)
     frame_size = max(1, int(sample_rate * 0.040))
     hop_size = max(1, int(sample_rate * 0.010))
     f0_contour = estimate_f0_contour(
@@ -171,8 +181,6 @@ def summarize_feature_vector(samples: np.ndarray, sample_rate: int) -> np.ndarra
         frame_size=frame_size,
         hop_size=hop_size,
     )
-    mfcc_mean = np.mean(mfcc, axis=0, dtype=np.float64) if mfcc.size else np.zeros(13, dtype=np.float64)
-    mfcc_std = np.std(mfcc, axis=0, dtype=np.float64) if mfcc.size else np.zeros(13, dtype=np.float64)
     voiced_f0 = f0_contour[f0_contour > 0.0]
     mean_f0 = float(np.mean(voiced_f0, dtype=np.float64)) if voiced_f0.size else 0.0
     std_f0 = float(np.std(voiced_f0, dtype=np.float64)) if voiced_f0.size else 0.0
@@ -200,24 +208,135 @@ def load_sample_features(project_root: Path, manifest_path: Path, keyword: Optio
     return features
 
 
-def compute_feature_space(feature_vectors: np.ndarray, n_dims: int = 2) -> np.ndarray:
+def split_keyword_label(keyword: str) -> tuple[str, str]:
+    match = re.match(r"^(.*?)(\d+)?$", keyword.strip())
+    if not match:
+        return keyword, "speaker1"
+    base_keyword = match.group(1) or keyword
+    suffix = match.group(2)
+    if suffix is None:
+        return base_keyword, "speaker1"
+    return base_keyword, f"speaker{suffix}"
+
+
+def compute_pca(feature_vectors: np.ndarray, n_dims: int = 3) -> PcaResult:
     vectors = np.asarray(feature_vectors, dtype=np.float32)
     if vectors.ndim != 2:
         raise ValueError("feature_vectors must be a 2D array.")
     if vectors.shape[0] == 0:
-        return np.zeros((0, n_dims), dtype=np.float32)
+        return PcaResult(
+            coordinates=np.zeros((0, n_dims), dtype=np.float32),
+            explained_variance_ratio=np.zeros(0, dtype=np.float32),
+        )
     centered = vectors - np.mean(vectors, axis=0, keepdims=True, dtype=np.float64)
     scale = np.std(centered, axis=0, keepdims=True, dtype=np.float64)
     scale[scale < 1e-8] = 1.0
     normalized = centered / scale
-    _, _, vt = np.linalg.svd(normalized, full_matrices=False)
-    components = vt[:n_dims].T
-    return (normalized @ components).astype(np.float32)
+    _, singular_values, vt = np.linalg.svd(normalized, full_matrices=False)
+    actual_dims = min(n_dims, vt.shape[0])
+    components = vt[:actual_dims].T
+    variances = (singular_values ** 2) / max(1, normalized.shape[0] - 1)
+    variance_ratio = variances / max(float(np.sum(variances)), 1e-12)
+    coordinates = (normalized @ components).astype(np.float32)
+    if actual_dims < n_dims:
+        padded = np.zeros((coordinates.shape[0], n_dims), dtype=np.float32)
+        padded[:, :actual_dims] = coordinates
+        coordinates = padded
+    return PcaResult(
+        coordinates=coordinates,
+        explained_variance_ratio=np.asarray(variance_ratio, dtype=np.float32),
+    )
 
 
-def plot_feature_space(
+def _pc_label(index: int, variance_ratio: np.ndarray) -> str:
+    if index < variance_ratio.size:
+        return f"PC{index + 1} ({variance_ratio[index] * 100.0:.1f}%)"
+    return f"PC{index + 1}"
+
+
+def _scatter_by_exact_keyword(
+    axis,
     sample_features: list[SampleFeatures],
     coordinates: np.ndarray,
+) -> None:
+    keywords = [item.record.keyword for item in sample_features]
+    unique_keywords = sorted(set(keywords))
+    cmap = plt.get_cmap("tab10")
+    for index, keyword in enumerate(unique_keywords):
+        mask = [item.record.keyword == keyword for item in sample_features]
+        xs = coordinates[mask, 0]
+        ys = coordinates[mask, 1]
+        axis.scatter(xs, ys, label=keyword, s=70, alpha=0.85, color=cmap(index % 10))
+    axis.set_title("Exact Labels: PC1 vs PC2")
+    axis.legend()
+
+
+def _scatter_by_base_keyword_and_speaker(
+    axis,
+    sample_features: list[SampleFeatures],
+    coordinates: np.ndarray,
+    x_pc_index: int,
+    y_pc_index: int,
+) -> None:
+    parsed = [split_keyword_label(item.record.keyword) for item in sample_features]
+    base_keywords = sorted({base for base, _ in parsed})
+    speakers = sorted({speaker for _, speaker in parsed})
+    color_map = {keyword: plt.get_cmap("tab10")(index % 10) for index, keyword in enumerate(base_keywords)}
+    marker_cycle = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
+    marker_map = {speaker: marker_cycle[index % len(marker_cycle)] for index, speaker in enumerate(speakers)}
+
+    for base_keyword in base_keywords:
+        for speaker in speakers:
+            mask = [
+                parsed[index][0] == base_keyword and parsed[index][1] == speaker
+                for index in range(len(sample_features))
+            ]
+            if not any(mask):
+                continue
+            xs = coordinates[mask, x_pc_index]
+            ys = coordinates[mask, y_pc_index]
+            axis.scatter(
+                xs,
+                ys,
+                s=70,
+                alpha=0.85,
+                color=color_map[base_keyword],
+                marker=marker_map[speaker],
+            )
+
+    color_handles = [
+        Line2D([0], [0], marker="o", linestyle="", color=color_map[keyword], label=keyword, markersize=8)
+        for keyword in base_keywords
+    ]
+    speaker_handles = [
+        Line2D([0], [0], marker=marker_map[speaker], linestyle="", color="black", label=speaker, markersize=8)
+        for speaker in speakers
+    ]
+    legend1 = axis.legend(handles=color_handles, title="Base Keyword", loc="best")
+    axis.add_artist(legend1)
+    axis.legend(handles=speaker_handles, title="Speaker", loc="lower right")
+
+
+def _plot_label_centroids(axis, sample_features: list[SampleFeatures], coordinates: np.ndarray) -> None:
+    keywords = sorted({item.record.keyword for item in sample_features})
+    cmap = plt.get_cmap("tab10")
+    for index, keyword in enumerate(keywords):
+        mask = [item.record.keyword == keyword for item in sample_features]
+        centroid = np.mean(coordinates[mask, :2], axis=0, dtype=np.float64)
+        axis.scatter(
+            centroid[0],
+            centroid[1],
+            s=120,
+            alpha=0.9,
+            color=cmap(index % 10),
+        )
+        axis.annotate(keyword, (centroid[0], centroid[1]), fontsize=9, alpha=0.85)
+    axis.set_title("Label Centroids: PC1 vs PC2")
+
+
+def plot_feature_dashboard(
+    sample_features: list[SampleFeatures],
+    pca: PcaResult,
     *,
     output_path: Optional[Path] = None,
     show: bool = True,
@@ -225,24 +344,45 @@ def plot_feature_space(
 ) -> Path | None:
     if not sample_features:
         raise ValueError("No samples available to plot.")
-    keywords = [item.record.keyword for item in sample_features]
-    unique_keywords = sorted(set(keywords))
-    figure, axis = plt.subplots(figsize=(10, 7))
-    cmap = plt.get_cmap("tab10")
-    for index, keyword in enumerate(unique_keywords):
-        mask = [item.record.keyword == keyword for item in sample_features]
-        xs = coordinates[mask, 0]
-        ys = coordinates[mask, 1]
-        axis.scatter(xs, ys, label=keyword, s=70, alpha=0.85, color=cmap(index % 10))
+    coordinates = pca.coordinates
+    variance_ratio = pca.explained_variance_ratio
+    figure, axes = plt.subplots(2, 3, figsize=(18, 11))
+
+    _scatter_by_exact_keyword(axes[0, 0], sample_features, coordinates)
+    _scatter_by_base_keyword_and_speaker(axes[0, 1], sample_features, coordinates, 0, 1)
+    axes[0, 1].set_title("Base Keyword + Speaker: PC1 vs PC2")
+    _scatter_by_base_keyword_and_speaker(axes[0, 2], sample_features, coordinates, 0, 2)
+    axes[0, 2].set_title("Base Keyword + Speaker: PC1 vs PC3")
+    _scatter_by_base_keyword_and_speaker(axes[1, 0], sample_features, coordinates, 1, 2)
+    axes[1, 0].set_title("Base Keyword + Speaker: PC2 vs PC3")
+    _plot_label_centroids(axes[1, 1], sample_features, coordinates)
+
+    num_components = min(6, variance_ratio.size)
+    scree_x = np.arange(1, num_components + 1)
+    axes[1, 2].bar(scree_x, variance_ratio[:num_components] * 100.0, color="#4C78A8", alpha=0.85)
+    axes[1, 2].set_title("Explained Variance")
+    axes[1, 2].set_xlabel("Principal Component")
+    axes[1, 2].set_ylabel("Variance Explained (%)")
+    axes[1, 2].set_xticks(scree_x)
+    axes[1, 2].grid(axis="y", alpha=0.25)
+
+    for axis, x_pc_index, y_pc_index in (
+        (axes[0, 0], 0, 1),
+        (axes[0, 1], 0, 1),
+        (axes[0, 2], 0, 2),
+        (axes[1, 0], 1, 2),
+        (axes[1, 1], 0, 1),
+    ):
+        axis.set_xlabel(_pc_label(x_pc_index, variance_ratio))
+        axis.set_ylabel(_pc_label(y_pc_index, variance_ratio))
+        axis.grid(alpha=0.25)
+
     if annotate:
         for point, item in zip(coordinates, sample_features):
-            axis.annotate(item.record.sample_id, (point[0], point[1]), fontsize=8, alpha=0.7)
-    axis.set_title("MFCC + F0 Feature Space")
-    axis.set_xlabel("Principal Component 1")
-    axis.set_ylabel("Principal Component 2")
-    axis.legend()
-    axis.grid(alpha=0.25)
-    figure.tight_layout()
+            axes[0, 0].annotate(item.record.sample_id, (point[0], point[1]), fontsize=7, alpha=0.65)
+
+    figure.suptitle("MFCC + F0 PCA Dashboard", fontsize=18)
+    figure.tight_layout(rect=(0, 0, 1, 0.97))
     saved_path: Path | None = None
     if output_path is not None:
         output_path = Path(output_path).resolve()
@@ -276,10 +416,10 @@ def build_feature_plot(
     if not sample_features:
         raise RuntimeError("No saved samples found for feature extraction.")
     vectors = np.vstack([item.vector for item in sample_features]).astype(np.float32)
-    coordinates = compute_feature_space(vectors)
-    return plot_feature_space(
+    pca = compute_pca(vectors, n_dims=3)
+    return plot_feature_dashboard(
         sample_features,
-        coordinates,
+        pca,
         output_path=output_path,
         show=show,
         annotate=annotate,

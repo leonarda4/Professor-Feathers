@@ -45,7 +45,7 @@ If you want to start collection directly from the IDE, run [start_recording.py](
 pf-features
 ```
 
-This extracts a per-sample feature vector made from MFCC statistics plus pitch (`f0`) statistics, projects all samples into a 2D feature space with PCA, saves the plot to `data/features/feature_space.png`, and opens the plot window. You can also run [show_feature_space.py](/Users/test/Documents/HANDS_ON_AI/Professor%20Feathers/show_feature_space.py) directly from the IDE.
+This extracts a per-sample feature vector made from MFCC statistics plus pitch (`f0`) statistics and builds a PCA dashboard. The saved figure includes multiple views such as exact-label clustering, base-keyword vs speaker comparisons, `PC1/PC2`, `PC1/PC3`, `PC2/PC3`, label centroids, and explained-variance bars. The dashboard is saved to `data/features/feature_space.png` and opened on screen. You can also run [show_feature_space.py](/Users/test/Documents/HANDS_ON_AI/Professor%20Feathers/show_feature_space.py) directly from the IDE.
 
 ## Notes
 
