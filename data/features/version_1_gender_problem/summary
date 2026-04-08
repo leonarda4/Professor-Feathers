@@ -1,0 +1,33 @@
+[EXPERIMENT LOG]
+Date: 2026-04-08
+Feature set: MFCC + Voiced-Ratio (F0 removed)
+
+DECISION
+Removed F0 features (mean_f0, std_f0) from the feature vector.
+Retained: 13 MFCC means, 13 MFCC stds, voiced_ratio (27 features total).
+
+REASON
+PCA on the full MFCC + F0 feature set was producing a clear diagonal
+gender boundary in PC1 vs PC2, separating female speakers (1, 6) from
+male speakers (2-5) regardless of keyword. The dominant source of variance
+was absolute F0 level (female ~2x male pitch), which PCA greedily captured
+as its primary axis. This suppressed word-level signal.
+
+OUTCOME
+Removing F0 eliminated the gender diagonal. PC1 now appears more
+word-driven. Centroid separation between dance and sing improved along PC1.
+Overall within-word speaker scatter is reduced but still significant.
+Speaker 6 centroids remain outliers, suggesting residual speaker-identity
+variance is still present.
+
+CONCLUSION
+F0 removal was necessary but is likely too aggressive as a permanent fix.
+Absolute F0 level is the problem, not F0 itself. Pitch contour shape and
+rhythm are word-discriminative features being lost by full removal.
+
+NEXT STEPS
+1. Implement per-speaker F0 normalization (subtract speaker mean, divide
+   by speaker std) to preserve relative pitch contour while removing
+   the male/female offset.
+2. Reintroduce normalized F0 features and compare against current results.
+3. Proceed to multi-label LDA on whichever feature set performs better.

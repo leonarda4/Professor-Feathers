@@ -23,9 +23,24 @@ class SampleFeatures:
 
 
 @dataclass
+class SampleFeatureParts:
+    record: SampleRecord
+    mfcc_mean: np.ndarray
+    mfcc_std: np.ndarray
+    voiced_f0: np.ndarray
+    voiced_ratio: float
+
+
+@dataclass
 class PcaResult:
     coordinates: np.ndarray
     explained_variance_ratio: np.ndarray
+
+
+@dataclass
+class LdaResult:
+    coordinates: np.ndarray
+    explained_discriminant_ratio: np.ndarray
 
 
 def frame_signal(samples: np.ndarray, frame_size: int, hop_size: int) -> np.ndarray:
@@ -169,7 +184,11 @@ def compute_mfcc(
     return log_mel @ basis.T
 
 
-def summarize_feature_vector(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+def extract_feature_parts(
+    record: SampleRecord,
+    samples: np.ndarray,
+    sample_rate: int,
+) -> SampleFeatureParts:
     mfcc = compute_mfcc(samples, sample_rate=sample_rate)
     mfcc_mean = np.mean(mfcc, axis=0, dtype=np.float64) if mfcc.size else np.zeros(13, dtype=np.float64)
     mfcc_std = np.std(mfcc, axis=0, dtype=np.float64) if mfcc.size else np.zeros(13, dtype=np.float64)
@@ -182,30 +201,99 @@ def summarize_feature_vector(samples: np.ndarray, sample_rate: int) -> np.ndarra
         hop_size=hop_size,
     )
     voiced_f0 = f0_contour[f0_contour > 0.0]
-    mean_f0 = float(np.mean(voiced_f0, dtype=np.float64)) if voiced_f0.size else 0.0
-    std_f0 = float(np.std(voiced_f0, dtype=np.float64)) if voiced_f0.size else 0.0
     voiced_ratio = float(voiced_f0.size) / float(max(1, f0_contour.size))
+    return SampleFeatureParts(
+        record=record,
+        mfcc_mean=np.asarray(mfcc_mean, dtype=np.float32),
+        mfcc_std=np.asarray(mfcc_std, dtype=np.float32),
+        voiced_f0=np.asarray(voiced_f0, dtype=np.float32),
+        voiced_ratio=voiced_ratio,
+    )
+
+
+def _speaker_from_keyword(keyword: str) -> str:
+    return split_keyword_label(keyword)[1]
+
+
+def _base_keyword_from_keyword(keyword: str) -> str:
+    return split_keyword_label(keyword)[0]
+
+
+def _compute_speaker_f0_stats(
+    sample_parts: list[SampleFeatureParts],
+) -> dict[str, tuple[float, float]]:
+    grouped_voiced_f0: dict[str, list[np.ndarray]] = {}
+    for item in sample_parts:
+        speaker = _speaker_from_keyword(item.record.keyword)
+        if item.voiced_f0.size == 0:
+            continue
+        grouped_voiced_f0.setdefault(speaker, []).append(item.voiced_f0.astype(np.float64, copy=False))
+
+    speaker_stats: dict[str, tuple[float, float]] = {}
+    for speaker, values in grouped_voiced_f0.items():
+        concatenated = np.concatenate(values) if values else np.zeros(0, dtype=np.float64)
+        if concatenated.size == 0:
+            speaker_stats[speaker] = (0.0, 1.0)
+            continue
+        mean_f0 = float(np.mean(concatenated, dtype=np.float64))
+        std_f0 = float(np.std(concatenated, dtype=np.float64))
+        speaker_stats[speaker] = (mean_f0, std_f0 if std_f0 > 1e-6 else 1.0)
+    return speaker_stats
+
+
+def _vectorize_feature_parts(
+    item: SampleFeatureParts,
+    speaker_f0_stats: dict[str, tuple[float, float]],
+) -> np.ndarray:
+    speaker = _speaker_from_keyword(item.record.keyword)
+    speaker_mean_f0, speaker_std_f0 = speaker_f0_stats.get(speaker, (0.0, 1.0))
+    if item.voiced_f0.size > 0:
+        normalized_f0 = (item.voiced_f0.astype(np.float64) - speaker_mean_f0) / max(speaker_std_f0, 1e-6)
+        mean_f0 = float(np.mean(normalized_f0, dtype=np.float64))
+        std_f0 = float(np.std(normalized_f0, dtype=np.float64))
+    else:
+        mean_f0 = 0.0
+        std_f0 = 0.0
     return np.concatenate(
         [
-            np.asarray(mfcc_mean, dtype=np.float32),
-            np.asarray(mfcc_std, dtype=np.float32),
-            np.asarray([mean_f0, std_f0, voiced_ratio], dtype=np.float32),
+            item.mfcc_mean.astype(np.float32, copy=False),
+            item.mfcc_std.astype(np.float32, copy=False),
+            np.asarray([mean_f0, std_f0, item.voiced_ratio], dtype=np.float32),
         ]
     ).astype(np.float32)
 
 
-def load_sample_features(project_root: Path, manifest_path: Path, keyword: Optional[str] = None) -> list[SampleFeatures]:
+def build_sample_features(sample_parts: list[SampleFeatureParts]) -> list[SampleFeatures]:
+    speaker_f0_stats = _compute_speaker_f0_stats(sample_parts)
+    return [
+        SampleFeatures(record=item.record, vector=_vectorize_feature_parts(item, speaker_f0_stats))
+        for item in sample_parts
+    ]
+
+
+def load_sample_feature_parts(
+    project_root: Path,
+    manifest_path: Path,
+    keyword: Optional[str] = None,
+) -> list[SampleFeatureParts]:
     project_root = Path(project_root).resolve()
     records = read_manifest_records(manifest_path, keyword=keyword)
-    features: list[SampleFeatures] = []
+    sample_parts: list[SampleFeatureParts] = []
     for record in records:
         sample_path = project_root / record.path
         if not sample_path.exists():
             continue
         samples, sample_rate = read_wav(sample_path)
-        vector = summarize_feature_vector(samples, sample_rate=sample_rate)
-        features.append(SampleFeatures(record=record, vector=vector))
-    return features
+        sample_parts.append(extract_feature_parts(record, samples, sample_rate=sample_rate))
+    return sample_parts
+
+
+def load_sample_features(
+    project_root: Path,
+    manifest_path: Path,
+    keyword: Optional[str] = None,
+) -> list[SampleFeatures]:
+    return build_sample_features(load_sample_feature_parts(project_root, manifest_path, keyword=keyword))
 
 
 def _build_scanned_record(
@@ -243,11 +331,11 @@ def _build_scanned_record(
     )
 
 
-def load_sample_features_from_root(
+def load_sample_feature_parts_from_root(
     project_root: Path,
     samples_root: Path,
     keyword: Optional[str] = None,
-) -> list[SampleFeatures]:
+) -> list[SampleFeatureParts]:
     project_root = Path(project_root).resolve()
     samples_root = Path(samples_root).resolve()
     if not samples_root.exists():
@@ -257,7 +345,7 @@ def load_sample_features_from_root(
         for path in samples_root.rglob("*")
         if path.is_file() and path.suffix.lower() == ".wav"
     )
-    features: list[SampleFeatures] = []
+    sample_parts: list[SampleFeatureParts] = []
     for sample_path in wav_paths:
         samples, sample_rate = read_wav(sample_path)
         record = _build_scanned_record(
@@ -269,9 +357,16 @@ def load_sample_features_from_root(
         )
         if keyword and record.keyword != keyword:
             continue
-        vector = summarize_feature_vector(samples, sample_rate=sample_rate)
-        features.append(SampleFeatures(record=record, vector=vector))
-    return features
+        sample_parts.append(extract_feature_parts(record, samples, sample_rate=sample_rate))
+    return sample_parts
+
+
+def load_sample_features_from_root(
+    project_root: Path,
+    samples_root: Path,
+    keyword: Optional[str] = None,
+) -> list[SampleFeatures]:
+    return build_sample_features(load_sample_feature_parts_from_root(project_root, samples_root, keyword=keyword))
 
 
 def split_keyword_label(keyword: str) -> tuple[str, str]:
@@ -285,6 +380,14 @@ def split_keyword_label(keyword: str) -> tuple[str, str]:
     return base_keyword, f"speaker{suffix}"
 
 
+def _standardize_feature_vectors(feature_vectors: np.ndarray) -> np.ndarray:
+    vectors = np.asarray(feature_vectors, dtype=np.float32)
+    centered = vectors - np.mean(vectors, axis=0, keepdims=True, dtype=np.float64)
+    scale = np.std(centered, axis=0, keepdims=True, dtype=np.float64)
+    scale[scale < 1e-8] = 1.0
+    return centered / scale
+
+
 def compute_pca(feature_vectors: np.ndarray, n_dims: int = 3) -> PcaResult:
     vectors = np.asarray(feature_vectors, dtype=np.float32)
     if vectors.ndim != 2:
@@ -294,10 +397,7 @@ def compute_pca(feature_vectors: np.ndarray, n_dims: int = 3) -> PcaResult:
             coordinates=np.zeros((0, n_dims), dtype=np.float32),
             explained_variance_ratio=np.zeros(0, dtype=np.float32),
         )
-    centered = vectors - np.mean(vectors, axis=0, keepdims=True, dtype=np.float64)
-    scale = np.std(centered, axis=0, keepdims=True, dtype=np.float64)
-    scale[scale < 1e-8] = 1.0
-    normalized = centered / scale
+    normalized = _standardize_feature_vectors(vectors)
     _, singular_values, vt = np.linalg.svd(normalized, full_matrices=False)
     actual_dims = min(n_dims, vt.shape[0])
     components = vt[:actual_dims].T
@@ -314,10 +414,91 @@ def compute_pca(feature_vectors: np.ndarray, n_dims: int = 3) -> PcaResult:
     )
 
 
+def compute_lda(
+    feature_vectors: np.ndarray,
+    labels: list[str] | np.ndarray,
+    n_dims: int = 3,
+) -> LdaResult:
+    vectors = np.asarray(feature_vectors, dtype=np.float32)
+    if vectors.ndim != 2:
+        raise ValueError("feature_vectors must be a 2D array.")
+    if vectors.shape[0] == 0:
+        return LdaResult(
+            coordinates=np.zeros((0, n_dims), dtype=np.float32),
+            explained_discriminant_ratio=np.zeros(0, dtype=np.float32),
+        )
+
+    labels_array = np.asarray(labels)
+    if labels_array.shape[0] != vectors.shape[0]:
+        raise ValueError("labels must have the same number of rows as feature_vectors.")
+
+    unique_labels = [str(label) for label in sorted(set(labels_array.tolist()))]
+    max_discriminants = max(0, min(vectors.shape[1], len(unique_labels) - 1))
+    if max_discriminants == 0:
+        return LdaResult(
+            coordinates=np.zeros((vectors.shape[0], n_dims), dtype=np.float32),
+            explained_discriminant_ratio=np.zeros(0, dtype=np.float32),
+        )
+
+    normalized = _standardize_feature_vectors(vectors)
+    overall_mean = np.mean(normalized, axis=0, dtype=np.float64)
+    feature_dim = normalized.shape[1]
+    within_scatter = np.zeros((feature_dim, feature_dim), dtype=np.float64)
+    between_scatter = np.zeros((feature_dim, feature_dim), dtype=np.float64)
+
+    for label in unique_labels:
+        class_vectors = normalized[labels_array == label]
+        if class_vectors.size == 0:
+            continue
+        class_mean = np.mean(class_vectors, axis=0, dtype=np.float64)
+        centered = class_vectors - class_mean
+        within_scatter += centered.T @ centered
+        mean_delta = (class_mean - overall_mean).reshape(-1, 1)
+        between_scatter += class_vectors.shape[0] * (mean_delta @ mean_delta.T)
+
+    regularized_within = within_scatter + (1e-6 * np.eye(feature_dim, dtype=np.float64))
+    matrix = np.linalg.pinv(regularized_within) @ between_scatter
+    eigenvalues, eigenvectors = np.linalg.eig(matrix)
+    eigenvalues = np.real(eigenvalues)
+    eigenvectors = np.real(eigenvectors)
+    order = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[order]
+    eigenvectors = eigenvectors[:, order]
+    positive = eigenvalues > 1e-8
+    eigenvalues = eigenvalues[positive]
+    eigenvectors = eigenvectors[:, positive]
+
+    actual_dims = min(n_dims, eigenvectors.shape[1], max_discriminants)
+    if actual_dims == 0:
+        return LdaResult(
+            coordinates=np.zeros((vectors.shape[0], n_dims), dtype=np.float32),
+            explained_discriminant_ratio=np.zeros(0, dtype=np.float32),
+        )
+
+    components = eigenvectors[:, :actual_dims]
+    coordinates = (normalized @ components).astype(np.float32)
+    if actual_dims < n_dims:
+        padded = np.zeros((coordinates.shape[0], n_dims), dtype=np.float32)
+        padded[:, :actual_dims] = coordinates
+        coordinates = padded
+
+    discriminant_ratio = eigenvalues / max(float(np.sum(eigenvalues)), 1e-12)
+    return LdaResult(
+        coordinates=coordinates,
+        explained_discriminant_ratio=np.asarray(discriminant_ratio, dtype=np.float32),
+    )
+
+
 def _pc_label(index: int, variance_ratio: np.ndarray) -> str:
     if index < variance_ratio.size:
         return f"PC{index + 1} ({variance_ratio[index] * 100.0:.1f}%)"
     return f"PC{index + 1}"
+
+
+def _ld_label(index: int, discriminant_ratio: np.ndarray) -> str:
+    if index < discriminant_ratio.size:
+        return f"LD{index + 1} ({discriminant_ratio[index] * 100.0:.1f}%)"
+    return f"LD{index + 1}"
 
 
 def _scatter_by_exact_keyword(
@@ -458,9 +639,54 @@ def _plot_all_pc_heatmap(axis, sample_features: list[SampleFeatures], coordinate
     return image
 
 
+def _plot_lda_strength(axis, lda: LdaResult) -> None:
+    if lda.explained_discriminant_ratio.size == 0:
+        axis.text(0.5, 0.5, "LDA unavailable", ha="center", va="center", fontsize=12)
+        axis.set_axis_off()
+        return
+    count = lda.explained_discriminant_ratio.size
+    x = np.arange(1, count + 1)
+    axis.bar(x, lda.explained_discriminant_ratio * 100.0, color="#72B7B2", alpha=0.9)
+    axis.set_title("LDA Discriminant Strength")
+    axis.set_xlabel("Linear Discriminant")
+    axis.set_ylabel("Relative Strength (%)")
+    axis.set_xticks(x)
+    axis.grid(axis="y", alpha=0.25)
+
+
+def _plot_lda_ld1_by_keyword(axis, sample_features: list[SampleFeatures], coordinates: np.ndarray) -> None:
+    parsed = [split_keyword_label(item.record.keyword) for item in sample_features]
+    base_keywords = sorted({base for base, _ in parsed})
+    color_map = {keyword: plt.get_cmap("tab10")(index % 10) for index, keyword in enumerate(base_keywords)}
+    rng = np.random.default_rng(0)
+
+    for index, keyword in enumerate(base_keywords):
+        values = coordinates[[base == keyword for base, _ in parsed], 0]
+        if values.size == 0:
+            continue
+        x = np.full(values.shape[0], index, dtype=np.float32)
+        x = x + rng.uniform(-0.08, 0.08, size=values.shape[0]).astype(np.float32)
+        axis.scatter(x, values, s=32, alpha=0.75, color=color_map[keyword], label=keyword)
+
+    axis.set_xticks(np.arange(len(base_keywords)))
+    axis.set_xticklabels(base_keywords)
+    axis.set_ylabel("LD1")
+    axis.set_title("LDA: LD1 by Base Keyword")
+    axis.grid(alpha=0.25)
+
+
+def _plot_unavailable(axis, title: str, message: str) -> None:
+    axis.set_title(title)
+    axis.text(0.5, 0.5, message, ha="center", va="center", fontsize=11)
+    axis.set_xticks([])
+    axis.set_yticks([])
+    axis.grid(False)
+
+
 def plot_feature_dashboard(
     sample_features: list[SampleFeatures],
     pca: PcaResult,
+    lda: Optional[LdaResult] = None,
     *,
     output_path: Optional[Path] = None,
     show: bool = True,
@@ -468,25 +694,28 @@ def plot_feature_dashboard(
 ) -> Path | None:
     if not sample_features:
         raise ValueError("No samples available to plot.")
-    coordinates = pca.coordinates
+    pca_coordinates = pca.coordinates
     variance_ratio = pca.explained_variance_ratio
-    all_pc_coordinates = coordinates[:, : variance_ratio.size] if variance_ratio.size else coordinates[:, :0]
-    figure = plt.figure(figsize=(20, 15))
-    grid = figure.add_gridspec(3, 3, height_ratios=[1.0, 1.0, 1.15])
-    axes = np.empty((2, 3), dtype=object)
+    all_pc_coordinates = pca_coordinates[:, : variance_ratio.size] if variance_ratio.size else pca_coordinates[:, :0]
+    lda_coordinates = None if lda is None else lda.coordinates
+    figure = plt.figure(figsize=(20, 19))
+    grid = figure.add_gridspec(4, 3, height_ratios=[1.0, 1.0, 0.9, 1.15])
+    axes = np.empty((3, 3), dtype=object)
     for row in range(2):
         for column in range(3):
             axes[row, column] = figure.add_subplot(grid[row, column])
-    heatmap_axis = figure.add_subplot(grid[2, :])
+    for column in range(3):
+        axes[2, column] = figure.add_subplot(grid[2, column])
+    heatmap_axis = figure.add_subplot(grid[3, :])
 
-    _scatter_by_exact_keyword(axes[0, 0], sample_features, coordinates)
-    _scatter_by_base_keyword_and_speaker(axes[0, 1], sample_features, coordinates, 0, 1)
+    _scatter_by_exact_keyword(axes[0, 0], sample_features, pca_coordinates)
+    _scatter_by_base_keyword_and_speaker(axes[0, 1], sample_features, pca_coordinates, 0, 1)
     axes[0, 1].set_title("Base Keyword + Speaker: PC1 vs PC2")
-    _scatter_by_base_keyword_and_speaker(axes[0, 2], sample_features, coordinates, 0, 2)
+    _scatter_by_base_keyword_and_speaker(axes[0, 2], sample_features, pca_coordinates, 0, 2)
     axes[0, 2].set_title("Base Keyword + Speaker: PC1 vs PC3")
-    _scatter_by_base_keyword_and_speaker(axes[1, 0], sample_features, coordinates, 1, 2)
+    _scatter_by_base_keyword_and_speaker(axes[1, 0], sample_features, pca_coordinates, 1, 2)
     axes[1, 0].set_title("Base Keyword + Speaker: PC2 vs PC3")
-    _plot_label_centroids(axes[1, 1], sample_features, coordinates)
+    _plot_label_centroids(axes[1, 1], sample_features, pca_coordinates)
 
     num_components = variance_ratio.size
     scree_x = np.arange(1, num_components + 1)
@@ -517,6 +746,31 @@ def plot_feature_dashboard(
     if heatmap_image is not None:
         figure.colorbar(heatmap_image, ax=heatmap_axis, fraction=0.02, pad=0.01, label="PC score")
 
+    if lda is None or lda_coordinates is None or lda.explained_discriminant_ratio.size == 0:
+        _plot_unavailable(
+            axes[2, 0],
+            "LDA: Base Keyword + Speaker",
+            "Need at least two base keywords\nwith non-degenerate features.",
+        )
+        _plot_unavailable(
+            axes[2, 1],
+            "LDA: Base Keyword + Speaker",
+            "No supervised discriminants\navailable for this selection.",
+        )
+        _plot_unavailable(axes[2, 2], "LDA Discriminant Strength", "Unavailable")
+    else:
+        _scatter_by_base_keyword_and_speaker(axes[2, 0], sample_features, lda_coordinates, 0, 1)
+        axes[2, 0].set_title("LDA: Base Keyword + Speaker: LD1 vs LD2")
+        if lda.explained_discriminant_ratio.size == 1:
+            _plot_lda_ld1_by_keyword(axes[2, 1], sample_features, lda_coordinates)
+        elif lda_coordinates.shape[1] >= 3 and lda.explained_discriminant_ratio.size >= 3:
+            _scatter_by_base_keyword_and_speaker(axes[2, 1], sample_features, lda_coordinates, 0, 2)
+            axes[2, 1].set_title("LDA: Base Keyword + Speaker: LD1 vs LD3")
+        else:
+            _scatter_by_base_keyword_and_speaker(axes[2, 1], sample_features, lda_coordinates, 0, 1)
+            axes[2, 1].set_title("LDA: Base Keyword + Speaker: LD1 vs LD2")
+        _plot_lda_strength(axes[2, 2], lda)
+
     for axis, x_pc_index, y_pc_index in (
         (axes[0, 0], 0, 1),
         (axes[0, 1], 0, 1),
@@ -528,11 +782,25 @@ def plot_feature_dashboard(
         axis.set_ylabel(_pc_label(y_pc_index, variance_ratio))
         axis.grid(alpha=0.25)
 
+    if lda is not None and lda_coordinates is not None and lda.explained_discriminant_ratio.size > 0:
+        axes[2, 0].set_xlabel(_ld_label(0, lda.explained_discriminant_ratio))
+        axes[2, 0].set_ylabel(_ld_label(1, lda.explained_discriminant_ratio))
+        axes[2, 0].grid(alpha=0.25)
+    if lda is not None and lda_coordinates is not None and lda.explained_discriminant_ratio.size > 1:
+        axes[2, 1].set_xlabel(_ld_label(0, lda.explained_discriminant_ratio))
+        axes[2, 1].set_ylabel(
+            _ld_label(2 if lda.explained_discriminant_ratio.size >= 3 else 1, lda.explained_discriminant_ratio)
+        )
+        axes[2, 1].grid(alpha=0.25)
+
     if annotate:
-        for point, item in zip(coordinates, sample_features):
+        for point, item in zip(pca_coordinates, sample_features):
             axes[0, 0].annotate(item.record.sample_id, (point[0], point[1]), fontsize=7, alpha=0.65)
 
-    figure.suptitle("MFCC + F0 PCA Dashboard with All-PC Overview", fontsize=18)
+    figure.suptitle(
+        "MFCC + Speaker-Normalized F0 PCA/LDA Dashboard with All-PC Overview",
+        fontsize=18,
+    )
     figure.tight_layout(rect=(0, 0, 1, 0.97))
     saved_path: Path | None = None
     if output_path is not None:
@@ -576,9 +844,12 @@ def build_feature_plot(
         raise RuntimeError("No saved samples found for feature extraction.")
     vectors = np.vstack([item.vector for item in sample_features]).astype(np.float32)
     pca = compute_pca(vectors, n_dims=max(3, min(vectors.shape[0], vectors.shape[1])))
+    lda_labels = [_base_keyword_from_keyword(item.record.keyword) for item in sample_features]
+    lda = compute_lda(vectors, lda_labels, n_dims=3)
     return plot_feature_dashboard(
         sample_features,
         pca,
+        lda=lda,
         output_path=output_path,
         show=show,
         annotate=annotate,
@@ -586,7 +857,9 @@ def build_feature_plot(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Extract MFCC + F0 features and plot a 2D feature space.")
+    parser = argparse.ArgumentParser(
+        description="Extract MFCC + speaker-normalized F0 features and plot PCA/LDA feature spaces."
+    )
     parser.add_argument("--project-root", default=".", help="Project root containing src/ and data/.")
     parser.add_argument("--config", default=None, help="Optional YAML config override.")
     parser.add_argument("--keyword", default=None, help="Optional keyword filter.")
