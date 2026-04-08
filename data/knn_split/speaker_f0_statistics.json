@@ -1,0 +1,68 @@
+{
+  "global": {
+    "clip_count": 481,
+    "mean_f0": 187.72886321966448,
+    "std_f0": 76.88423940444605,
+    "voiced_frame_count": 27725
+  },
+  "min_clips_per_speaker": 5,
+  "speakers": {
+    "speaker1": {
+      "clip_count": 128,
+      "fallback_to_global": false,
+      "mean_f0": 210.81957833183702,
+      "std_f0": 60.141007165676,
+      "voiced_frame_count": 7816
+    },
+    "speaker2": {
+      "clip_count": 80,
+      "fallback_to_global": false,
+      "mean_f0": 152.65271052481813,
+      "std_f0": 94.16905652849435,
+      "voiced_frame_count": 4262
+    },
+    "speaker3": {
+      "clip_count": 113,
+      "fallback_to_global": false,
+      "mean_f0": 177.5107912592863,
+      "std_f0": 75.67477823825404,
+      "voiced_frame_count": 6494
+    },
+    "speaker4": {
+      "clip_count": 32,
+      "fallback_to_global": false,
+      "mean_f0": 161.74308398316367,
+      "std_f0": 71.76086650305434,
+      "voiced_frame_count": 1562
+    },
+    "speaker5": {
+      "clip_count": 32,
+      "fallback_to_global": false,
+      "mean_f0": 162.07140758810522,
+      "std_f0": 92.23751333470268,
+      "voiced_frame_count": 1752
+    },
+    "speaker6": {
+      "clip_count": 32,
+      "fallback_to_global": false,
+      "mean_f0": 212.50241098365765,
+      "std_f0": 54.184049409397396,
+      "voiced_frame_count": 2249
+    },
+    "speaker7": {
+      "clip_count": 32,
+      "fallback_to_global": false,
+      "mean_f0": 208.08373080680667,
+      "std_f0": 64.72018548355615,
+      "voiced_frame_count": 1782
+    },
+    "speaker8": {
+      "clip_count": 32,
+      "fallback_to_global": false,
+      "mean_f0": 203.7284535137953,
+      "std_f0": 69.52342027161718,
+      "voiced_frame_count": 1808
+    }
+  },
+  "version": 1
+}

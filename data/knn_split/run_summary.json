@@ -1,0 +1,121 @@
+{
+  "base_keyword_accuracy": 0.975,
+  "exact_label_accuracy": 0.9,
+  "feature_dimension": 47,
+  "k": 5,
+  "output_root": "/Users/test/Documents/HANDS_ON_AI/Professor Feathers/data/knn_split",
+  "seed": 42,
+  "source_root": "/Users/test/Documents/HANDS_ON_AI/Professor Feathers/data/raw",
+  "split_counts": {
+    "dance": {
+      "test": 12,
+      "total": 60,
+      "train": 48
+    },
+    "dance2": {
+      "test": 8,
+      "total": 40,
+      "train": 32
+    },
+    "dance3": {
+      "test": 12,
+      "total": 61,
+      "train": 49
+    },
+    "dance4": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "dance5": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "dance6": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "dance7": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "dance8": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "hello": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "hello2": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "parrot": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "parrot2": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "parrot3": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing": {
+      "test": 12,
+      "total": 60,
+      "train": 48
+    },
+    "sing2": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing3": {
+      "test": 12,
+      "total": 60,
+      "train": 48
+    },
+    "sing4": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing5": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing6": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing7": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing8": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    }
+  },
+  "test_ratio": 0.2,
+  "test_root": "/Users/test/Documents/HANDS_ON_AI/Professor Feathers/data/knn_split/test",
+  "test_sample_count": 120,
+  "train_root": "/Users/test/Documents/HANDS_ON_AI/Professor Feathers/data/knn_split/train",
+  "train_sample_count": 481
+}
