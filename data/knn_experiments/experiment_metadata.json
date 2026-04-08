@@ -1,0 +1,230 @@
+{
+  "best_by_variant": [
+    {
+      "base_accuracy": 0.9833333333333333,
+      "exact_accuracy": 0.9166666666666666,
+      "feature_dimension": 47,
+      "k": 4,
+      "variant": "f0_contour"
+    },
+    {
+      "base_accuracy": 0.9916666666666667,
+      "exact_accuracy": 0.9666666666666667,
+      "feature_dimension": 29,
+      "k": 6,
+      "variant": "f0_mean_std"
+    },
+    {
+      "base_accuracy": 0.9833333333333333,
+      "exact_accuracy": 0.9666666666666667,
+      "feature_dimension": 27,
+      "k": 1,
+      "variant": "no_f0"
+    }
+  ],
+  "contour_speaker_f0_statistics": {
+    "global": {
+      "clip_count": 481,
+      "mean_f0": 187.72886321966448,
+      "std_f0": 76.88423940444605,
+      "voiced_frame_count": 27725
+    },
+    "min_clips_per_speaker": 5,
+    "speakers": {
+      "speaker1": {
+        "clip_count": 128,
+        "fallback_to_global": false,
+        "mean_f0": 210.81957833183702,
+        "std_f0": 60.141007165676,
+        "voiced_frame_count": 7816
+      },
+      "speaker2": {
+        "clip_count": 80,
+        "fallback_to_global": false,
+        "mean_f0": 152.65271052481813,
+        "std_f0": 94.16905652849435,
+        "voiced_frame_count": 4262
+      },
+      "speaker3": {
+        "clip_count": 113,
+        "fallback_to_global": false,
+        "mean_f0": 177.5107912592863,
+        "std_f0": 75.67477823825404,
+        "voiced_frame_count": 6494
+      },
+      "speaker4": {
+        "clip_count": 32,
+        "fallback_to_global": false,
+        "mean_f0": 161.74308398316367,
+        "std_f0": 71.76086650305434,
+        "voiced_frame_count": 1562
+      },
+      "speaker5": {
+        "clip_count": 32,
+        "fallback_to_global": false,
+        "mean_f0": 162.07140758810522,
+        "std_f0": 92.23751333470268,
+        "voiced_frame_count": 1752
+      },
+      "speaker6": {
+        "clip_count": 32,
+        "fallback_to_global": false,
+        "mean_f0": 212.50241098365765,
+        "std_f0": 54.184049409397396,
+        "voiced_frame_count": 2249
+      },
+      "speaker7": {
+        "clip_count": 32,
+        "fallback_to_global": false,
+        "mean_f0": 208.08373080680667,
+        "std_f0": 64.72018548355615,
+        "voiced_frame_count": 1782
+      },
+      "speaker8": {
+        "clip_count": 32,
+        "fallback_to_global": false,
+        "mean_f0": 203.7284535137953,
+        "std_f0": 69.52342027161718,
+        "voiced_frame_count": 1808
+      }
+    },
+    "version": 1
+  },
+  "k_values": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "overall_winner": {
+    "base_accuracy": 0.9916666666666667,
+    "exact_accuracy": 0.9666666666666667,
+    "feature_dimension": 29,
+    "k": 6,
+    "variant": "f0_mean_std"
+  },
+  "seed": 42,
+  "source_root": "/Users/test/Documents/HANDS_ON_AI/Professor Feathers/data/raw",
+  "split_counts": {
+    "dance": {
+      "test": 12,
+      "total": 60,
+      "train": 48
+    },
+    "dance2": {
+      "test": 8,
+      "total": 40,
+      "train": 32
+    },
+    "dance3": {
+      "test": 12,
+      "total": 61,
+      "train": 49
+    },
+    "dance4": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "dance5": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "dance6": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "dance7": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "dance8": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "hello": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "hello2": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "parrot": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "parrot2": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "parrot3": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing": {
+      "test": 12,
+      "total": 60,
+      "train": 48
+    },
+    "sing2": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing3": {
+      "test": 12,
+      "total": 60,
+      "train": 48
+    },
+    "sing4": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing5": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing6": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing7": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    },
+    "sing8": {
+      "test": 4,
+      "total": 20,
+      "train": 16
+    }
+  },
+  "split_root": "/Users/test/Documents/HANDS_ON_AI/Professor Feathers/data/knn_experiments/split",
+  "test_ratio": 0.2,
+  "test_root": "/Users/test/Documents/HANDS_ON_AI/Professor Feathers/data/knn_experiments/split/test",
+  "train_root": "/Users/test/Documents/HANDS_ON_AI/Professor Feathers/data/knn_experiments/split/train"
+}

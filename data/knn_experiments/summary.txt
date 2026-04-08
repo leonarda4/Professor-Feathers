@@ -1,0 +1,19 @@
+KNN experiment summary
+======================
+
+source_root: /Users/test/Documents/HANDS_ON_AI/Professor Feathers/data/raw
+seed: 42
+test_ratio: 0.2
+train_samples: 481
+test_samples: 120
+k_values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+
+Best results by variant
+-----------------------
+f0_contour: k=4, feature_dim=47, exact_accuracy=0.9167, base_accuracy=0.9833
+f0_mean_std: k=6, feature_dim=29, exact_accuracy=0.9667, base_accuracy=0.9917
+no_f0: k=1, feature_dim=27, exact_accuracy=0.9667, base_accuracy=0.9833
+
+Overall winner
+--------------
+f0_mean_std: k=6, feature_dim=29, exact_accuracy=0.9667, base_accuracy=0.9917
