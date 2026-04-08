@@ -13,7 +13,7 @@ from matplotlib.lines import Line2D
 
 from audio import read_wav
 from config import load_app_config
-from storage import SampleRecord, read_manifest_records
+from storage import SampleRecord, read_manifest_records, relative_to_root
 
 
 @dataclass
@@ -208,6 +208,72 @@ def load_sample_features(project_root: Path, manifest_path: Path, keyword: Optio
     return features
 
 
+def _build_scanned_record(
+    *,
+    project_root: Path,
+    samples_root: Path,
+    sample_path: Path,
+    sample_rate: int,
+    num_samples: int,
+) -> SampleRecord:
+    relative_path = sample_path.resolve().relative_to(samples_root.resolve())
+    parts = relative_path.parts
+    if len(parts) >= 2:
+        keyword = parts[0].strip()
+    else:
+        keyword = sample_path.parent.name.strip() or "keyword"
+    if len(parts) >= 3:
+        session_id = parts[1].strip() or "manual"
+    else:
+        session_id = "manual"
+    try:
+        record_path = relative_to_root(project_root, sample_path)
+    except ValueError:
+        record_path = str(sample_path.resolve())
+    return SampleRecord(
+        sample_id=sample_path.stem,
+        keyword=keyword,
+        path=record_path,
+        sample_rate=int(sample_rate),
+        duration_ms=int(round((num_samples / float(sample_rate)) * 1000.0)) if sample_rate > 0 else 0,
+        timestamp="folder-scan",
+        session_id=session_id,
+        num_samples=int(num_samples),
+        status="accepted",
+    )
+
+
+def load_sample_features_from_root(
+    project_root: Path,
+    samples_root: Path,
+    keyword: Optional[str] = None,
+) -> list[SampleFeatures]:
+    project_root = Path(project_root).resolve()
+    samples_root = Path(samples_root).resolve()
+    if not samples_root.exists():
+        raise FileNotFoundError(f"Sample root does not exist: {samples_root}")
+    wav_paths = sorted(
+        path
+        for path in samples_root.rglob("*")
+        if path.is_file() and path.suffix.lower() == ".wav"
+    )
+    features: list[SampleFeatures] = []
+    for sample_path in wav_paths:
+        samples, sample_rate = read_wav(sample_path)
+        record = _build_scanned_record(
+            project_root=project_root,
+            samples_root=samples_root,
+            sample_path=sample_path,
+            sample_rate=sample_rate,
+            num_samples=int(np.asarray(samples).size),
+        )
+        if keyword and record.keyword != keyword:
+            continue
+        vector = summarize_feature_vector(samples, sample_rate=sample_rate)
+        features.append(SampleFeatures(record=record, vector=vector))
+    return features
+
+
 def split_keyword_label(keyword: str) -> tuple[str, str]:
     match = re.match(r"^(.*?)(\d+)?$", keyword.strip())
     if not match:
@@ -334,6 +400,64 @@ def _plot_label_centroids(axis, sample_features: list[SampleFeatures], coordinat
     axis.set_title("Label Centroids: PC1 vs PC2")
 
 
+def _plot_all_pc_heatmap(axis, sample_features: list[SampleFeatures], coordinates: np.ndarray):
+    if coordinates.ndim != 2 or coordinates.shape[0] == 0 or coordinates.shape[1] == 0:
+        axis.set_visible(False)
+        return None
+
+    order = sorted(
+        range(len(sample_features)),
+        key=lambda index: (
+            sample_features[index].record.keyword,
+            sample_features[index].record.session_id,
+            sample_features[index].record.sample_id,
+        ),
+    )
+    ordered_features = [sample_features[index] for index in order]
+    ordered_coordinates = coordinates[order, :]
+
+    max_abs = float(np.max(np.abs(ordered_coordinates))) if ordered_coordinates.size else 1.0
+    max_abs = max(max_abs, 1e-6)
+    image = axis.imshow(
+        ordered_coordinates,
+        aspect="auto",
+        interpolation="nearest",
+        cmap="coolwarm",
+        vmin=-max_abs,
+        vmax=max_abs,
+    )
+
+    pc_count = ordered_coordinates.shape[1]
+    tick_step = max(1, int(math.ceil(pc_count / 12.0)))
+    xticks = list(range(0, pc_count, tick_step))
+    if (pc_count - 1) not in xticks:
+        xticks.append(pc_count - 1)
+    axis.set_xticks(xticks)
+    axis.set_xticklabels([f"PC{index + 1}" for index in xticks], rotation=0)
+
+    ytick_positions: list[float] = []
+    ytick_labels: list[str] = []
+    group_start = 0
+    current_keyword = ordered_features[0].record.keyword
+    for index, item in enumerate(ordered_features[1:], start=1):
+        if item.record.keyword == current_keyword:
+            continue
+        ytick_positions.append((group_start + index - 1) / 2.0)
+        ytick_labels.append(current_keyword)
+        axis.axhline(index - 0.5, color="black", linewidth=0.6, alpha=0.35)
+        group_start = index
+        current_keyword = item.record.keyword
+    ytick_positions.append((group_start + len(ordered_features) - 1) / 2.0)
+    ytick_labels.append(current_keyword)
+
+    axis.set_yticks(ytick_positions)
+    axis.set_yticklabels(ytick_labels)
+    axis.set_xlabel("Principal Component")
+    axis.set_ylabel("Samples grouped by keyword")
+    axis.set_title("All-PC Score Heatmap")
+    return image
+
+
 def plot_feature_dashboard(
     sample_features: list[SampleFeatures],
     pca: PcaResult,
@@ -346,7 +470,14 @@ def plot_feature_dashboard(
         raise ValueError("No samples available to plot.")
     coordinates = pca.coordinates
     variance_ratio = pca.explained_variance_ratio
-    figure, axes = plt.subplots(2, 3, figsize=(18, 11))
+    all_pc_coordinates = coordinates[:, : variance_ratio.size] if variance_ratio.size else coordinates[:, :0]
+    figure = plt.figure(figsize=(20, 15))
+    grid = figure.add_gridspec(3, 3, height_ratios=[1.0, 1.0, 1.15])
+    axes = np.empty((2, 3), dtype=object)
+    for row in range(2):
+        for column in range(3):
+            axes[row, column] = figure.add_subplot(grid[row, column])
+    heatmap_axis = figure.add_subplot(grid[2, :])
 
     _scatter_by_exact_keyword(axes[0, 0], sample_features, coordinates)
     _scatter_by_base_keyword_and_speaker(axes[0, 1], sample_features, coordinates, 0, 1)
@@ -357,14 +488,34 @@ def plot_feature_dashboard(
     axes[1, 0].set_title("Base Keyword + Speaker: PC2 vs PC3")
     _plot_label_centroids(axes[1, 1], sample_features, coordinates)
 
-    num_components = min(6, variance_ratio.size)
+    num_components = variance_ratio.size
     scree_x = np.arange(1, num_components + 1)
     axes[1, 2].bar(scree_x, variance_ratio[:num_components] * 100.0, color="#4C78A8", alpha=0.85)
-    axes[1, 2].set_title("Explained Variance")
+    cumulative = np.cumsum(variance_ratio[:num_components]) * 100.0
+    cumulative_axis = axes[1, 2].twinx()
+    cumulative_axis.plot(scree_x, cumulative, color="#E45756", marker="o", markersize=3, linewidth=1.5)
+    cumulative_axis.set_ylabel("Cumulative Variance (%)")
+    cumulative_axis.set_ylim(0.0, 100.0)
+    axes[1, 2].set_title("Explained Variance (All PCs)")
     axes[1, 2].set_xlabel("Principal Component")
     axes[1, 2].set_ylabel("Variance Explained (%)")
-    axes[1, 2].set_xticks(scree_x)
+    tick_step = max(1, int(math.ceil(num_components / 12.0)))
+    xticks = list(scree_x[::tick_step])
+    if scree_x.size and int(scree_x[-1]) not in xticks:
+        xticks.append(int(scree_x[-1]))
+    axes[1, 2].set_xticks(xticks)
     axes[1, 2].grid(axis="y", alpha=0.25)
+    axes[1, 2].legend(
+        handles=[
+            Line2D([0], [0], color="#4C78A8", linewidth=6, label="Per-PC"),
+            Line2D([0], [0], color="#E45756", marker="o", linewidth=1.5, label="Cumulative"),
+        ],
+        loc="best",
+    )
+
+    heatmap_image = _plot_all_pc_heatmap(heatmap_axis, sample_features, all_pc_coordinates)
+    if heatmap_image is not None:
+        figure.colorbar(heatmap_image, ax=heatmap_axis, fraction=0.02, pad=0.01, label="PC score")
 
     for axis, x_pc_index, y_pc_index in (
         (axes[0, 0], 0, 1),
@@ -381,7 +532,7 @@ def plot_feature_dashboard(
         for point, item in zip(coordinates, sample_features):
             axes[0, 0].annotate(item.record.sample_id, (point[0], point[1]), fontsize=7, alpha=0.65)
 
-    figure.suptitle("MFCC + F0 PCA Dashboard", fontsize=18)
+    figure.suptitle("MFCC + F0 PCA Dashboard with All-PC Overview", fontsize=18)
     figure.tight_layout(rect=(0, 0, 1, 0.97))
     saved_path: Path | None = None
     if output_path is not None:
@@ -405,18 +556,26 @@ def build_feature_plot(
     project_root: Path,
     config_path: Optional[str] = None,
     keyword: Optional[str] = None,
+    samples_root: Optional[Path] = None,
     output_path: Optional[Path] = None,
     show: bool = True,
     annotate: bool = False,
 ) -> Path | None:
     config = load_app_config(config_path=config_path)
     project_root = Path(project_root).resolve()
-    manifest_path = (project_root / config.storage.manifest_path).resolve()
-    sample_features = load_sample_features(project_root, manifest_path, keyword=keyword)
+    if samples_root is not None:
+        sample_features = load_sample_features_from_root(
+            project_root,
+            Path(samples_root).resolve(),
+            keyword=keyword,
+        )
+    else:
+        manifest_path = (project_root / config.storage.manifest_path).resolve()
+        sample_features = load_sample_features(project_root, manifest_path, keyword=keyword)
     if not sample_features:
         raise RuntimeError("No saved samples found for feature extraction.")
     vectors = np.vstack([item.vector for item in sample_features]).astype(np.float32)
-    pca = compute_pca(vectors, n_dims=3)
+    pca = compute_pca(vectors, n_dims=max(3, min(vectors.shape[0], vectors.shape[1])))
     return plot_feature_dashboard(
         sample_features,
         pca,
@@ -432,6 +591,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default=None, help="Optional YAML config override.")
     parser.add_argument("--keyword", default=None, help="Optional keyword filter.")
     parser.add_argument(
+        "--samples-root",
+        default=None,
+        help=(
+            "Optional folder tree of WAV files to plot instead of using the manifest. "
+            "Expected layout: <samples-root>/<keyword>/<session-id>/sample.wav or "
+            "<samples-root>/<keyword>/sample.wav."
+        ),
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="Optional output image path. Defaults to data/features/feature_space.png.",
@@ -446,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
         project_root=project_root,
         config_path=args.config,
         keyword=args.keyword,
+        samples_root=Path(args.samples_root).resolve() if args.samples_root else None,
         output_path=output_path,
         show=not args.no_show,
         annotate=args.annotate,

@@ -47,6 +47,14 @@ pf-features
 
 This extracts a per-sample feature vector made from MFCC statistics plus pitch (`f0`) statistics and builds a PCA dashboard. The saved figure includes multiple views such as exact-label clustering, base-keyword vs speaker comparisons, `PC1/PC2`, `PC1/PC3`, `PC2/PC3`, label centroids, and explained-variance bars. The dashboard is saved to `data/features/feature_space.png` and opened on screen. You can also run [show_feature_space.py](/Users/test/Documents/HANDS_ON_AI/Professor%20Feathers/show_feature_space.py) directly from the IDE.
 
+If you want to visualize only a hand-picked subset of the dataset, point the plotter at a folder tree of WAV files instead of the full manifest:
+
+```bash
+pf-features --samples-root data/feature_space_selection
+```
+
+The expected folder layout is either `<samples-root>/<keyword>/<session-id>/sample.wav` or `<samples-root>/<keyword>/sample.wav`. A helper folder with instructions is available at [data/feature_space_selection/README.txt](/Users/test/Documents/HANDS_ON_AI/Professor%20Feathers/data/feature_space_selection/README.txt).
+
 ## Notes
 
 - Audio is recorded as mono 16 kHz PCM WAV.

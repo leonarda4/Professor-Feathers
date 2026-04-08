@@ -1,0 +1,106 @@
+Professor Feathers
+Current Feature Space Summary
+Saved: 2026-04-08
+
+This file is a snapshot of the feature-space pipeline and dataset state before any further changes.
+It is stored alongside the current feature-space visualizations in data/features/.
+
+Existing feature-space visualization files
+- feature_space.png
+- feature_space_MFCC.png
+- feature_space_f0+MFCC.png
+- feature_space_f0+MFCC_v2.png
+
+Current recording workflow
+- Audio is collected through the microphone as mono 16 kHz PCM WAV.
+- The collector uses a lightweight energy-based endpointer to segment one spoken word per saved clip.
+- Samples are written under data/raw/<keyword>/<session-id>/sample_XXXX.wav.
+- Metadata is appended to data/manifests/samples.jsonl.
+- The IDE helper entry points are start_recording.py for collection and show_feature_space.py for visualization.
+
+Current feature extraction pipeline
+- Each saved clip is loaded from the manifest and converted into one fixed-length feature vector.
+- MFCCs are computed frame-by-frame from the waveform.
+- The per-frame MFCC matrix is summarized with:
+  - 13 MFCC mean values
+  - 13 MFCC standard deviation values
+- A pitch contour (f0 contour) is estimated frame-by-frame with an autocorrelation-based method.
+- The f0 contour is summarized with:
+  - mean voiced f0
+  - standard deviation of voiced f0
+  - voiced ratio
+- The final feature vector size is 29 dimensions total.
+
+Current projection and visualization pipeline
+- All feature vectors are stacked into a single matrix.
+- Features are centered and standardized dimension-wise.
+- PCA is used to project the features into 3 dimensions.
+- The current dashboard view includes:
+  - exact-label clustering on PC1 vs PC2
+  - base-keyword plus speaker plots on PC1 vs PC2, PC1 vs PC3, and PC2 vs PC3
+  - label centroids on PC1 vs PC2
+  - explained-variance bar chart
+
+Current dataset snapshot
+- Total samples: 376
+- Total keyword labels: 13
+- Label counts and duration ranges at the time of this snapshot:
+  - dance: count=30, sessions=4, duration_mean_ms=895.3, duration_min_ms=700, duration_max_ms=1030
+  - dance2: count=40, sessions=2, duration_mean_ms=894.8, duration_min_ms=730, duration_max_ms=2020
+  - dance3: count=61, sessions=3, duration_mean_ms=889.7, duration_min_ms=510, duration_max_ms=2020
+  - dance4: count=20, sessions=1, duration_mean_ms=748.5, duration_min_ms=330, duration_max_ms=1990
+  - hello: count=20, sessions=1, duration_mean_ms=736.0, duration_min_ms=670, duration_max_ms=850
+  - hello2: count=20, sessions=1, duration_mean_ms=863.5, duration_min_ms=730, duration_max_ms=1060
+  - parrot: count=20, sessions=1, duration_mean_ms=743.5, duration_min_ms=580, duration_max_ms=790
+  - parrot2: count=25, sessions=2, duration_mean_ms=784.0, duration_min_ms=610, duration_max_ms=2020
+  - parrot3: count=20, sessions=1, duration_mean_ms=790.0, duration_min_ms=520, duration_max_ms=1660
+  - sing: count=20, sessions=1, duration_mean_ms=749.5, duration_min_ms=700, duration_max_ms=850
+  - sing2: count=20, sessions=1, duration_mean_ms=764.0, duration_min_ms=670, duration_max_ms=850
+  - sing3: count=60, sessions=2, duration_mean_ms=869.2, duration_min_ms=520, duration_max_ms=1870
+  - sing4: count=20, sessions=1, duration_mean_ms=622.5, duration_min_ms=300, duration_max_ms=1810
+
+Current PCA snapshot
+- Feature dimension before PCA: 29
+- Explained variance ratios for the first six principal components:
+  - PC1: 0.1621
+  - PC2: 0.1417
+  - PC3: 0.1024
+  - PC4: 0.0927
+  - PC5: 0.0806
+  - PC6: 0.0562
+- Total variance explained by the first three PCs: 0.4062
+
+Interpretation of the current feature space
+- The current representation is mainly a pooled summary of timbre and pitch.
+- It captures broad spectral shape through MFCC statistics and some voicing/pitch behavior through f0 summary statistics.
+- It does not preserve detailed temporal structure of the spoken word beyond coarse variability.
+- Because the map is based on PCA, the 2D and 3D views are useful for inspection but they compress a larger 29D space into a much smaller view.
+
+Known caveats in the current snapshot
+- The dataset is imbalanced across labels.
+- Clip durations vary substantially, so duration-related effects may influence separation.
+- Session effects may influence clustering because recordings come from multiple sessions.
+- The current feature summary may separate clips by speaker/session/timing artifacts as much as by word identity.
+
+
+What's working
+- Word-level signal genuinely exists — the 4 keyword centroids are meaningfully separated in PC1/PC2
+MFCC + F0 is a reasonable feature set; the variance explained is decent across the first 6 PCs
+Speaker identity is also being captured, just not in a controlled way
+
+
+Core problem
+- Within-word speaker variance is comparable in magnitude to between-word variance
+- The PCA has no concept of what you care about — it just finds the directions of maximum overall variance, which turns out to be a messy mixture of word and speaker differences. Neither is cleanly isolated.
+
+Symptoms
+- Same-word clips from different speakers scatter widely (e.g. dance1–dance5 spread across the entire PC1/PC2 plane)
+- PC1 appears to be driven by a combination of both factors rather than either cleanly
+- PC2 vs PC3 projection is largely noise, overlap between all classes
+- The heatmaps showed signal fading past PC6, meaning useful information is concentrated but buried
+
+Root cause
+- Unsupervised PCA is the wrong tool for a problem with two known, structured sources of variation. It will never reliably separate word vs speaker because it has no label information to guide the projection.
+
+Next step
+- Replacing or supplement PCA with multi-label LDA using combined word+speaker labels

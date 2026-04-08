@@ -15,6 +15,7 @@ from features import build_default_output_path, build_feature_plot
 CONFIG_PATH = None
 KEYWORD = None
 ANNOTATE = False
+SAMPLES_ROOT = PROJECT_ROOT / "data" / "feature_space_selection"
 
 
 def main() -> int:
@@ -22,6 +23,7 @@ def main() -> int:
         project_root=PROJECT_ROOT,
         config_path=CONFIG_PATH,
         keyword=KEYWORD,
+        samples_root=SAMPLES_ROOT,
         output_path=build_default_output_path(PROJECT_ROOT),
         show=True,
         annotate=ANNOTATE,
