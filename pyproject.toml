@@ -15,6 +15,7 @@ dependencies = [
   "sounddevice>=0.4.6",
   "pynput>=1.7.6",
   "PyYAML>=6.0",
+  "pyserial>=3.5",
 ]
 
 [project.scripts]
