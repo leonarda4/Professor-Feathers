@@ -6,7 +6,6 @@ import json
 import random
 import shutil
 import sys
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +19,15 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from features import (  # noqa: E402
-    build_sample_features,
-    fit_speaker_f0_statistics,
+    build_feature_matrix,
     load_sample_feature_parts_from_root,
     split_keyword_label,
+)
+from knn_utils import (  # noqa: E402
+    choose_knn_label,
+    compute_accuracy,
+    knn_predict,
+    standardize_feature_matrices,
 )
 
 
@@ -94,79 +98,6 @@ def copy_split_files(paths: list[Path], *, source_root: Path, split_root: Path) 
         destination_path = split_root / relative_path
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, destination_path)
-
-
-def standardize_feature_matrices(
-    train_vectors: np.ndarray,
-    test_vectors: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, dict[str, list[float]]]:
-    mean = np.mean(train_vectors, axis=0, dtype=np.float64)
-    std = np.std(train_vectors, axis=0, dtype=np.float64)
-    std[std < 1e-8] = 1.0
-    train_scaled = ((train_vectors - mean) / std).astype(np.float32)
-    test_scaled = ((test_vectors - mean) / std).astype(np.float32)
-    scaler = {
-        "mean": mean.astype(float).tolist(),
-        "std": std.astype(float).tolist(),
-    }
-    return train_scaled, test_scaled, scaler
-
-
-def choose_knn_label(neighbor_labels: list[str], neighbor_distances: list[float]) -> str:
-    label_counts = Counter(neighbor_labels)
-    max_count = max(label_counts.values())
-    candidates = [label for label, count in label_counts.items() if count == max_count]
-    if len(candidates) == 1:
-        return candidates[0]
-
-    distance_by_label: dict[str, float] = {}
-    for label in candidates:
-        total_distance = sum(
-            distance
-            for candidate_label, distance in zip(neighbor_labels, neighbor_distances)
-            if candidate_label == label
-        )
-        distance_by_label[label] = total_distance
-    return sorted(candidates, key=lambda label: (distance_by_label[label], label))[0]
-
-
-def knn_predict(
-    train_vectors: np.ndarray,
-    train_labels: list[str],
-    test_vectors: np.ndarray,
-    *,
-    k: int,
-) -> list[dict[str, Any]]:
-    if train_vectors.size == 0:
-        raise ValueError("Training vectors are empty.")
-    effective_k = max(1, min(int(k), len(train_labels)))
-    predictions: list[dict[str, Any]] = []
-
-    for test_vector in test_vectors:
-        distances = np.linalg.norm(train_vectors - test_vector, axis=1)
-        neighbor_indices = np.argsort(distances)[:effective_k]
-        neighbor_labels = [train_labels[index] for index in neighbor_indices]
-        neighbor_distances = [float(distances[index]) for index in neighbor_indices]
-        predicted_label = choose_knn_label(neighbor_labels, neighbor_distances)
-        predictions.append(
-            {
-                "predicted_label": predicted_label,
-                "neighbor_labels": neighbor_labels,
-                "neighbor_distances": neighbor_distances,
-            }
-        )
-    return predictions
-
-
-def compute_accuracy(true_labels: list[str], predicted_labels: list[str]) -> float:
-    if not true_labels:
-        return 0.0
-    correct = sum(
-        1
-        for true_label, predicted_label in zip(true_labels, predicted_labels)
-        if true_label == predicted_label
-    )
-    return float(correct) / float(len(true_labels))
 
 
 def write_predictions_csv(
@@ -401,14 +332,16 @@ def main() -> int:
 
     train_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, train_root)
     test_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, test_root)
-    f0_statistics = fit_speaker_f0_statistics(train_parts)
-    train_features = build_sample_features(train_parts, f0_statistics=f0_statistics)
-    test_features = build_sample_features(test_parts, f0_statistics=f0_statistics)
-
-    train_vectors = np.stack([item.vector for item in train_features]).astype(np.float32)
-    test_vectors = np.stack([item.vector for item in test_features]).astype(np.float32)
-    train_labels = [item.record.keyword for item in train_features]
-    test_labels = [item.record.keyword for item in test_features]
+    train_vectors, train_labels, f0_statistics = build_feature_matrix(
+        train_parts,
+        variant="f0_contour",
+    )
+    test_vectors, test_labels, _ = build_feature_matrix(
+        test_parts,
+        variant="f0_contour",
+        f0_statistics=f0_statistics,
+        warn=False,
+    )
 
     train_vectors_scaled, test_vectors_scaled, scaler = standardize_feature_matrices(
         train_vectors,
@@ -428,7 +361,7 @@ def main() -> int:
     base_accuracy = compute_accuracy(true_base_labels, predicted_base_labels)
 
     predictions_path = output_root / "predictions.csv"
-    write_predictions_csv(predictions_path, test_features, predictions)
+    write_predictions_csv(predictions_path, test_parts, predictions)
     confusion_matrix_path = output_root / "confusion_matrices.png"
     save_confusion_matrix_figure(
         confusion_matrix_path,
@@ -449,8 +382,8 @@ def main() -> int:
             "test_ratio": float(args.test_ratio),
             "k": int(args.k),
             "feature_dimension": int(train_vectors.shape[1]),
-            "train_sample_count": int(len(train_features)),
-            "test_sample_count": int(len(test_features)),
+            "train_sample_count": int(len(train_parts)),
+            "test_sample_count": int(len(test_parts)),
             "exact_label_accuracy": exact_accuracy,
             "base_keyword_accuracy": base_accuracy,
             "split_counts": split_counts,
@@ -465,7 +398,7 @@ def main() -> int:
     print(f"Base-keyword accuracy: {base_accuracy:.3f}")
     print("")
     print("Example predictions:")
-    for sample_feature, prediction in list(zip(test_features, predictions))[:10]:
+    for sample_feature, prediction in list(zip(test_parts, predictions))[:10]:
         print(
             f"{sample_feature.record.sample_id} | true={sample_feature.record.keyword} | "
             f"pred={prediction['predicted_label']}"

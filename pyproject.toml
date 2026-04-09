@@ -23,4 +23,15 @@ pf-features = "features:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["audio", "collect", "config", "endpointer", "features", "storage"]
+py-modules = [
+  "audio",
+  "collect",
+  "config",
+  "endpointer",
+  "feature_core",
+  "feature_loading",
+  "feature_plotting",
+  "features",
+  "knn_utils",
+  "storage",
+]

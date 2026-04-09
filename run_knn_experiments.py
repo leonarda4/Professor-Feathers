@@ -18,17 +18,18 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from features import (  # noqa: E402
-    build_sample_features,
-    fit_speaker_f0_statistics,
+    build_feature_matrix,
     load_sample_feature_parts_from_root,
+)
+from knn_utils import (  # noqa: E402
+    compute_accuracy,
+    knn_predict,
+    standardize_feature_matrices,
 )
 from run_knn_classifier import (  # noqa: E402
     collect_wav_files_by_label,
-    compute_accuracy,
     copy_split_files,
-    knn_predict,
     split_paths_by_label,
-    standardize_feature_matrices,
 )
 
 
@@ -46,55 +47,6 @@ def reset_output_root(output_root: Path, *, force: bool) -> None:
             )
         shutil.rmtree(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
-
-
-def build_feature_vectors_no_f0(sample_parts) -> tuple[np.ndarray, list[str]]:
-    vectors = [
-        np.concatenate(
-            [
-                item.mfcc_mean.astype(np.float32, copy=False),
-                item.mfcc_std.astype(np.float32, copy=False),
-                np.asarray([item.voiced_ratio], dtype=np.float32),
-            ]
-        ).astype(np.float32)
-        for item in sample_parts
-    ]
-    labels = [item.record.keyword for item in sample_parts]
-    return np.stack(vectors).astype(np.float32), labels
-
-
-def build_feature_vectors_mean_std(sample_parts) -> tuple[np.ndarray, list[str]]:
-    vectors = []
-    labels = []
-    for item in sample_parts:
-        voiced_f0 = item.voiced_f0.astype(np.float64, copy=False)
-        if voiced_f0.size > 0:
-            mean_f0 = float(np.mean(voiced_f0, dtype=np.float64))
-            std_f0 = float(np.std(voiced_f0, dtype=np.float64))
-        else:
-            mean_f0 = 0.0
-            std_f0 = 0.0
-        vector = np.concatenate(
-            [
-                item.mfcc_mean.astype(np.float32, copy=False),
-                item.mfcc_std.astype(np.float32, copy=False),
-                np.asarray([mean_f0, std_f0, item.voiced_ratio], dtype=np.float32),
-            ]
-        ).astype(np.float32)
-        vectors.append(vector)
-        labels.append(item.record.keyword)
-    return np.stack(vectors).astype(np.float32), labels
-
-
-def build_feature_vectors_contour(train_parts, test_parts) -> tuple[np.ndarray, list[str], np.ndarray, list[str], dict[str, Any]]:
-    f0_statistics = fit_speaker_f0_statistics(train_parts)
-    train_features = build_sample_features(train_parts, f0_statistics=f0_statistics)
-    test_features = build_sample_features(test_parts, f0_statistics=f0_statistics)
-    train_vectors = np.stack([item.vector for item in train_features]).astype(np.float32)
-    test_vectors = np.stack([item.vector for item in test_features]).astype(np.float32)
-    train_labels = [item.record.keyword for item in train_features]
-    test_labels = [item.record.keyword for item in test_features]
-    return train_vectors, train_labels, test_vectors, test_labels, f0_statistics
 
 
 def evaluate_knn_grid(
@@ -289,13 +241,34 @@ def main() -> int:
     train_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, train_root)
     test_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, test_root)
 
-    contour_train_vectors, contour_train_labels, contour_test_vectors, contour_test_labels, contour_f0_stats = (
-        build_feature_vectors_contour(train_parts, test_parts)
+    contour_train_vectors, contour_train_labels, contour_f0_stats = build_feature_matrix(
+        train_parts,
+        variant="f0_contour",
     )
-    no_f0_train_vectors, no_f0_train_labels = build_feature_vectors_no_f0(train_parts)
-    no_f0_test_vectors, no_f0_test_labels = build_feature_vectors_no_f0(test_parts)
-    mean_std_train_vectors, mean_std_train_labels = build_feature_vectors_mean_std(train_parts)
-    mean_std_test_vectors, mean_std_test_labels = build_feature_vectors_mean_std(test_parts)
+    contour_test_vectors, contour_test_labels, _ = build_feature_matrix(
+        test_parts,
+        variant="f0_contour",
+        f0_statistics=contour_f0_stats,
+        warn=False,
+    )
+    mean_std_train_vectors, mean_std_train_labels, _ = build_feature_matrix(
+        train_parts,
+        variant="f0_mean_std",
+    )
+    mean_std_test_vectors, mean_std_test_labels, _ = build_feature_matrix(
+        test_parts,
+        variant="f0_mean_std",
+        warn=False,
+    )
+    no_f0_train_vectors, no_f0_train_labels, _ = build_feature_matrix(
+        train_parts,
+        variant="no_f0",
+    )
+    no_f0_test_vectors, no_f0_test_labels, _ = build_feature_matrix(
+        test_parts,
+        variant="no_f0",
+        warn=False,
+    )
 
     variant_payloads = [
         {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import queue
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -12,6 +13,14 @@ from audio import MicrophoneStream, describe_default_input, duration_ms, list_in
 from config import AppConfig, load_app_config
 from endpointer import UtteranceEndpointer
 from storage import SampleRecord, append_manifest_record, ensure_storage, next_sample_path, relative_to_root
+
+
+@dataclass
+class RecordingBatch:
+    keyword: str
+    session_id: str
+    total: int
+    remaining: int
 
 
 def _require_pynput():
@@ -118,6 +127,46 @@ def save_utterance(
     return record
 
 
+def start_recording_batch(
+    keyword: str,
+    *,
+    batch_size: int,
+    session_id: Optional[str] = None,
+) -> RecordingBatch:
+    size = max(1, int(batch_size))
+    return RecordingBatch(
+        keyword=keyword,
+        session_id=session_id or build_session_id(),
+        total=size,
+        remaining=size,
+    )
+
+
+def save_batch_utterance(
+    audio: np.ndarray,
+    *,
+    project_root: Path,
+    raw_dir: Path,
+    manifest_path: Path,
+    batch: RecordingBatch,
+    sample_rate: int,
+) -> tuple[SampleRecord, int, bool]:
+    record = save_utterance(
+        audio,
+        project_root=project_root,
+        raw_dir=raw_dir,
+        manifest_path=manifest_path,
+        keyword=batch.keyword,
+        session_id=batch.session_id,
+        sample_rate=sample_rate,
+    )
+    if batch.remaining > 0:
+        batch.remaining -= 1
+    completed = batch.total - batch.remaining
+    is_complete = batch.remaining <= 0
+    return record, completed, is_complete
+
+
 def apply_cli_overrides(
     config: AppConfig,
     *,
@@ -145,7 +194,7 @@ def run_collection(config: AppConfig, project_root: Path, keyword: str, session_
     )
     sample_rate = int(config.audio.sample_rate)
     batch_size = max(1, int(config.collection.batch_size))
-    remaining_batch_items = 0
+    current_batch: Optional[RecordingBatch] = None
     endpointer = build_endpointer(config)
     hotkey_events: "queue.Queue[str]" = queue.Queue()
     listener = start_hotkey_listener(
@@ -181,7 +230,11 @@ def run_collection(config: AppConfig, project_root: Path, keyword: str, session_
                         print("Stopping collection.")
                         return 0
                     if action == "arm":
-                        remaining_batch_items = batch_size
+                        current_batch = start_recording_batch(
+                            keyword,
+                            batch_size=batch_size,
+                            session_id=session_id,
+                        )
                         endpointer.arm()
                         print(f"Batch armed for {batch_size} recordings. Waiting for word 1.")
                 chunk = microphone.read_block(timeout=0.1)
@@ -190,30 +243,29 @@ def run_collection(config: AppConfig, project_root: Path, keyword: str, session_
                 for event in endpointer.process_chunk(chunk):
                     if event.kind != "utterance" or event.audio is None or event.audio.size == 0:
                         continue
-                    record = save_utterance(
+                    if current_batch is None:
+                        continue
+                    record, completed, is_complete = save_batch_utterance(
                         event.audio,
                         project_root=project_root,
                         raw_dir=raw_dir,
                         manifest_path=manifest_path,
-                        keyword=keyword,
-                        session_id=session_id,
+                        batch=current_batch,
                         sample_rate=sample_rate,
                     )
                     print(f"Saved {record.sample_id} to {record.path} ({record.duration_ms} ms)")
-                    if remaining_batch_items > 0:
-                        remaining_batch_items -= 1
-                    completed = batch_size - remaining_batch_items
-                    if remaining_batch_items > 0:
+                    if not is_complete:
                         endpointer.arm()
                         print(
-                            f"Ready for next word ({completed}/{batch_size}). "
-                            f"{remaining_batch_items} recordings remaining."
+                            f"Ready for next word ({completed}/{current_batch.total}). "
+                            f"{current_batch.remaining} recordings remaining."
                         )
                     else:
                         print(
-                            f"Batch complete ({completed}/{batch_size}). Press "
+                            f"Batch complete ({completed}/{current_batch.total}). Press "
                             f"{config.collection.arm_key} to start the next batch."
                         )
+                        current_batch = None
     finally:
         listener.stop()
 
