@@ -37,9 +37,19 @@ def _normalize_key(key) -> str:
     return key_str.lower()
 
 
-def start_hotkey_listener(events: "queue.Queue[str]", arm_key: Optional[str] = "space", quit_key: Optional[str] = "esc"):
+def start_hotkey_listener(
+    events: "queue.Queue[str]",
+    arm_key: Optional[str] = "space",
+    quit_key: Optional[str] = "esc",
+    extra_actions: Optional[dict[str, str]] = None,
+):
     arm_name = arm_key.lower() if arm_key else None
     quit_name = quit_key.lower() if quit_key else None
+    normalized_extra_actions = {
+        str(key).lower(): str(action)
+        for key, action in (extra_actions or {}).items()
+        if key and action
+    }
     keyboard = _require_pynput()
 
     def on_press(key) -> None:  # pragma: no cover - hardware path
@@ -48,6 +58,8 @@ def start_hotkey_listener(events: "queue.Queue[str]", arm_key: Optional[str] = "
             events.put("arm")
         elif quit_name and name == quit_name:
             events.put("quit")
+        elif name in normalized_extra_actions:
+            events.put(normalized_extra_actions[name])
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
