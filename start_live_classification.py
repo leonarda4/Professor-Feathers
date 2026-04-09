@@ -5,7 +5,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -25,12 +25,12 @@ from collect import (
     start_hotkey_listener,
 )
 from config import load_app_config
-from features import (
+from feature_core import (
     build_feature_matrix,
     build_feature_vector_from_parts,
     extract_feature_parts,
-    load_sample_feature_parts_from_root,
 )
+from feature_loading import load_sample_feature_parts_from_root
 from knn_utils import choose_knn_label, knn_predict, standardize_feature_matrices
 from storage import SampleRecord, ensure_storage
 
@@ -38,9 +38,8 @@ from storage import SampleRecord, ensure_storage
 # Edit these values before running from the IDE.
 CONFIG_PATH = None
 SOURCE_ROOT = PROJECT_ROOT / "data" / "live"
-FEATURE_VARIANT = "f0_mean_std"  # "f0_mean_std", "f0_contour", or "no_f0"
+FEATURE_VARIANT = "f0_mean_std"  # "f0_mean_std" or "no_f0"
 K = 6
-SPEAKER_ID = None  # Optional known speaker id such as "speaker3".
 UNKNOWN_DISTANCE_THRESHOLD = None  # Set a float to override auto-thresholding.
 UNKNOWN_DISTANCE_PERCENTILE = 99.0
 UNKNOWN_DISTANCE_MARGIN = 1.10
@@ -62,7 +61,6 @@ class LiveKnnModel:
     train_vectors_scaled: np.ndarray
     scaler_mean: np.ndarray
     scaler_std: np.ndarray
-    f0_statistics: Optional[dict[str, Any]]
     unknown_distance_threshold: float
     label_thresholds: dict[str, float]
     min_label_vote_ratio: float
@@ -187,7 +185,7 @@ def prepare_live_knn_model(
     if not sample_parts:
         raise ValueError(f"No training samples found under {source_root}")
 
-    train_vectors, train_labels, f0_statistics = build_feature_matrix(
+    train_vectors, train_labels = build_feature_matrix(
         sample_parts,
         variant=feature_variant,
     )
@@ -210,7 +208,6 @@ def prepare_live_knn_model(
         train_vectors_scaled=train_vectors_scaled,
         scaler_mean=np.asarray(scaler["mean"], dtype=np.float64),
         scaler_std=np.asarray(scaler["std"], dtype=np.float64),
-        f0_statistics=f0_statistics,
         unknown_distance_threshold=float(unknown_distance_threshold),
         label_thresholds=_auto_label_thresholds(
             train_vectors_scaled,
@@ -228,14 +225,11 @@ def _build_live_command_vector(
     sample_rate: int,
     *,
     model: LiveKnnModel,
-    speaker_id: Optional[str],
 ) -> np.ndarray:
     sample_parts = extract_feature_parts(_build_live_record(), samples, sample_rate)
     return build_feature_vector_from_parts(
         sample_parts,
         variant=model.feature_variant,
-        f0_statistics=model.f0_statistics,
-        speaker_id=speaker_id,
     )
 
 
@@ -243,14 +237,11 @@ def predict_live_command(
     model: LiveKnnModel,
     samples: np.ndarray,
     sample_rate: int,
-    *,
-    speaker_id: Optional[str],
 ) -> CommandPrediction:
     feature_vector = _build_live_command_vector(
         samples,
         sample_rate,
         model=model,
-        speaker_id=speaker_id,
     )
     scaled_vector = _standardize_single_vector(feature_vector, model.scaler_mean, model.scaler_std)
     mean_neighbor_distance = _mean_k_neighbor_distance(
@@ -393,7 +384,6 @@ def run_live_classification(
     model: LiveKnnModel,
     config,
     project_root: Path,
-    speaker_id: Optional[str],
 ) -> int:
     sample_rate = int(config.audio.sample_rate)
     endpointer = build_endpointer(config)
@@ -524,7 +514,6 @@ def run_live_classification(
                         model,
                         event.audio,
                         sample_rate,
-                        speaker_id=speaker_id,
                     )
                     _print_prediction(prediction, k=model.k)
                     endpointer.arm()
@@ -558,7 +547,6 @@ def main() -> int:
         model=model,
         config=config,
         project_root=PROJECT_ROOT,
-        speaker_id=SPEAKER_ID,
     )
 
 

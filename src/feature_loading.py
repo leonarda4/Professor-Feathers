@@ -1,18 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 
 from audio import read_wav
-from feature_core import (
-    SampleFeatureParts,
-    SampleFeatures,
-    build_sample_features,
-    extract_feature_parts,
-    fit_speaker_f0_statistics,
-)
+from feature_core import SampleFeatureParts, SampleFeatures, build_sample_features, extract_feature_parts
 from storage import SampleRecord, read_manifest_records, relative_to_root
 
 
@@ -33,42 +27,15 @@ def load_sample_feature_parts(
     return sample_parts
 
 
-def load_sample_features_with_f0_statistics(
-    project_root: Path,
-    manifest_path: Path,
-    keyword: Optional[str] = None,
-    *,
-    f0_statistics: Optional[dict[str, Any]] = None,
-    min_clips_per_speaker: int = 5,
-    warn: bool = True,
-) -> tuple[list[SampleFeatures], dict[str, Any]]:
-    sample_parts = load_sample_feature_parts(project_root, manifest_path, keyword=keyword)
-    fitted_statistics = (
-        fit_speaker_f0_statistics(sample_parts, min_clips_per_speaker=min_clips_per_speaker, warn=warn)
-        if f0_statistics is None
-        else f0_statistics
-    )
-    return build_sample_features(sample_parts, f0_statistics=fitted_statistics), fitted_statistics
-
-
 def load_sample_features(
     project_root: Path,
     manifest_path: Path,
     keyword: Optional[str] = None,
     *,
-    f0_statistics: Optional[dict[str, Any]] = None,
-    min_clips_per_speaker: int = 5,
-    warn: bool = True,
+    variant: str = "f0_mean_std",
 ) -> list[SampleFeatures]:
-    features, _ = load_sample_features_with_f0_statistics(
-        project_root,
-        manifest_path,
-        keyword=keyword,
-        f0_statistics=f0_statistics,
-        min_clips_per_speaker=min_clips_per_speaker,
-        warn=warn,
-    )
-    return features
+    sample_parts = load_sample_feature_parts(project_root, manifest_path, keyword=keyword)
+    return build_sample_features(sample_parts, variant=variant)
 
 
 def _build_scanned_record(
@@ -141,14 +108,7 @@ def load_sample_features_from_root(
     samples_root: Path,
     keyword: Optional[str] = None,
     *,
-    f0_statistics: Optional[dict[str, Any]] = None,
-    min_clips_per_speaker: int = 5,
-    warn: bool = True,
+    variant: str = "f0_mean_std",
 ) -> list[SampleFeatures]:
     sample_parts = load_sample_feature_parts_from_root(project_root, samples_root, keyword=keyword)
-    fitted_statistics = (
-        fit_speaker_f0_statistics(sample_parts, min_clips_per_speaker=min_clips_per_speaker, warn=warn)
-        if f0_statistics is None
-        else f0_statistics
-    )
-    return build_sample_features(sample_parts, f0_statistics=fitted_statistics)
+    return build_sample_features(sample_parts, variant=variant)

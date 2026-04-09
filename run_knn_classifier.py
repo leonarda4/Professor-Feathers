@@ -18,11 +18,11 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from features import (  # noqa: E402
+from feature_core import (  # noqa: E402
     build_feature_matrix,
-    load_sample_feature_parts_from_root,
     split_keyword_label,
 )
+from feature_loading import load_sample_feature_parts_from_root  # noqa: E402
 from knn_utils import (  # noqa: E402
     choose_knn_label,
     compute_accuracy,
@@ -332,15 +332,13 @@ def main() -> int:
 
     train_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, train_root)
     test_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, test_root)
-    train_vectors, train_labels, f0_statistics = build_feature_matrix(
+    train_vectors, train_labels = build_feature_matrix(
         train_parts,
-        variant="f0_contour",
+        variant="f0_mean_std",
     )
-    test_vectors, test_labels, _ = build_feature_matrix(
+    test_vectors, test_labels = build_feature_matrix(
         test_parts,
-        variant="f0_contour",
-        f0_statistics=f0_statistics,
-        warn=False,
+        variant="f0_mean_std",
     )
 
     train_vectors_scaled, test_vectors_scaled, scaler = standardize_feature_matrices(
@@ -369,7 +367,6 @@ def main() -> int:
         predicted_labels=predicted_labels,
     )
 
-    write_json(output_root / "speaker_f0_statistics.json", f0_statistics)
     write_json(output_root / "feature_scaler.json", scaler)
     write_json(
         output_root / "run_summary.json",

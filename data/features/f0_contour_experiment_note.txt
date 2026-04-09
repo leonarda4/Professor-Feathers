@@ -1,0 +1,18 @@
+F0 contour experiment note
+==========================
+
+The removed F0 contour version represented pitch as a fixed 20-point shape instead of only using mean_f0 and std_f0.
+
+How it worked:
+- estimate a frame-by-frame F0 track from each clip
+- linearly fill unvoiced gaps when possible
+- resample the track to 20 points so all clips had the same length
+- normalize those 20 values per speaker
+- append the 20 normalized pitch values to the MFCC-based feature vector
+
+These saved experiment artifacts were intentionally kept:
+- PCA_dashboard_f0contour.png
+- PCA_dashboard_f0contour_sanity.txt
+- older KNN experiment logs in data/knn_experiments
+
+The active code path now uses only MFCC statistics, voiced_ratio, and optional F0 mean/std summary features.

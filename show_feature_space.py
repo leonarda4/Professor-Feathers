@@ -9,7 +9,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from features import build_default_output_path, build_feature_plot
+from feature_plotting import build_default_output_path, build_feature_plot
 
 
 CONFIG_PATH = None

@@ -3,10 +3,8 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
 
 import numpy as np
-from scipy.signal import resample
 
 from storage import SampleRecord
 
@@ -22,7 +20,6 @@ class SampleFeatureParts:
     record: SampleRecord
     mfcc_mean: np.ndarray
     mfcc_std: np.ndarray
-    f0_contour: np.ndarray
     voiced_f0: np.ndarray
     voiced_ratio: float
 
@@ -33,8 +30,7 @@ class PcaResult:
     explained_variance_ratio: np.ndarray
 
 
-F0_CONTOUR_POINTS = 20
-FEATURE_VARIANTS = ("f0_contour", "f0_mean_std", "no_f0")
+FEATURE_VARIANTS = ("f0_mean_std", "no_f0")
 
 
 def frame_signal(samples: np.ndarray, frame_size: int, hop_size: int) -> np.ndarray:
@@ -70,7 +66,7 @@ def mel_filterbank(
     n_fft: int,
     n_mels: int = 26,
     fmin: float = 50.0,
-    fmax: Optional[float] = None,
+    fmax: float | None = None,
 ) -> np.ndarray:
     fmax = float(fmax or (sample_rate / 2.0))
     mel_points = np.linspace(hz_to_mel(fmin), hz_to_mel(fmax), n_mels + 2)
@@ -105,7 +101,7 @@ def dct_basis(n_mfcc: int, n_mels: int) -> np.ndarray:
     return basis
 
 
-def estimate_f0_contour(
+def estimate_f0_track(
     samples: np.ndarray,
     sample_rate: int,
     frame_size: int,
@@ -120,29 +116,29 @@ def estimate_f0_contour(
     window = np.hanning(frame_size).astype(np.float32)
     min_lag = max(1, int(sample_rate / float(f0_max)))
     max_lag = max(min_lag + 1, int(sample_rate / float(f0_min)))
-    contour: list[float] = []
+    track: list[float] = []
     for frame in frames:
         centered = (frame - np.mean(frame, dtype=np.float64)).astype(np.float32, copy=False)
         weighted = centered * window
         energy = float(np.dot(weighted, weighted))
         if energy <= 1e-6:
-            contour.append(0.0)
+            track.append(0.0)
             continue
         autocorr = np.correlate(weighted, weighted, mode="full")[frame_size - 1 :]
         autocorr /= max(float(autocorr[0]), 1e-12)
         upper = min(max_lag, autocorr.size)
         if upper <= min_lag:
-            contour.append(0.0)
+            track.append(0.0)
             continue
         candidate = autocorr[min_lag:upper]
         peak_offset = int(np.argmax(candidate))
         peak_value = float(candidate[peak_offset])
         if peak_value < min_periodicity:
-            contour.append(0.0)
+            track.append(0.0)
             continue
         lag = min_lag + peak_offset
-        contour.append(float(sample_rate) / float(lag))
-    return np.asarray(contour, dtype=np.float32)
+        track.append(float(sample_rate) / float(lag))
+    return np.asarray(track, dtype=np.float32)
 
 
 def compute_mfcc(
@@ -188,55 +184,21 @@ def extract_feature_parts(
     mfcc_std = np.std(mfcc, axis=0, dtype=np.float64) if mfcc.size else np.zeros(13, dtype=np.float64)
     frame_size = max(1, int(sample_rate * 0.040))
     hop_size = max(1, int(sample_rate * 0.010))
-    f0_contour = estimate_f0_contour(
+    f0_track = estimate_f0_track(
         samples,
         sample_rate=sample_rate,
         frame_size=frame_size,
         hop_size=hop_size,
     )
-    voiced_f0 = f0_contour[f0_contour > 0.0]
-    voiced_ratio = float(voiced_f0.size) / float(max(1, f0_contour.size))
+    voiced_f0 = f0_track[f0_track > 0.0]
+    voiced_ratio = float(voiced_f0.size) / float(max(1, f0_track.size))
     return SampleFeatureParts(
         record=record,
         mfcc_mean=np.asarray(mfcc_mean, dtype=np.float32),
         mfcc_std=np.asarray(mfcc_std, dtype=np.float32),
-        f0_contour=np.asarray(f0_contour, dtype=np.float32),
         voiced_f0=np.asarray(voiced_f0, dtype=np.float32),
         voiced_ratio=voiced_ratio,
     )
-
-
-def interpolate_f0_contour(f0_contour: np.ndarray) -> tuple[np.ndarray, bool]:
-    contour = np.asarray(f0_contour, dtype=np.float32).reshape(-1)
-    if contour.size == 0:
-        return np.zeros(0, dtype=np.float32), True
-    valid_mask = np.isfinite(contour) & (contour > 0.0)
-    if not np.any(valid_mask):
-        return np.zeros_like(contour, dtype=np.float32), True
-    valid_indices = np.flatnonzero(valid_mask).astype(np.float32)
-    valid_values = contour[valid_mask].astype(np.float32, copy=False)
-    interpolated = np.interp(
-        np.arange(contour.size, dtype=np.float32),
-        valid_indices,
-        valid_values,
-    ).astype(np.float32)
-    return interpolated, False
-
-
-def resample_f0_contour(
-    f0_contour: np.ndarray,
-    n_points: int = F0_CONTOUR_POINTS,
-) -> tuple[np.ndarray, bool]:
-    n_points = max(1, int(n_points))
-    interpolated, fully_unvoiced = interpolate_f0_contour(f0_contour)
-    if fully_unvoiced:
-        return np.zeros(n_points, dtype=np.float32), True
-    if interpolated.size == n_points:
-        return interpolated.astype(np.float32, copy=False), False
-    if interpolated.size == 1:
-        return np.full(n_points, float(interpolated[0]), dtype=np.float32), False
-    resampled = np.real(resample(interpolated.astype(np.float64), n_points)).astype(np.float32)
-    return resampled, False
 
 
 def _default_record_for_summary(keyword: str = "keyword") -> SampleRecord:
@@ -265,100 +227,10 @@ def split_keyword_label(keyword: str) -> tuple[str, str]:
     return base_keyword, f"speaker{suffix}"
 
 
-def _global_f0_statistics(sample_parts: list[SampleFeatureParts]) -> tuple[float, float, int]:
-    voiced_tracks = [item.voiced_f0.astype(np.float64, copy=False) for item in sample_parts if item.voiced_f0.size > 0]
-    if not voiced_tracks:
-        return 0.0, 1.0, 0
-    concatenated = np.concatenate(voiced_tracks)
-    mean_f0 = float(np.mean(concatenated, dtype=np.float64))
-    std_f0 = float(np.std(concatenated, dtype=np.float64))
-    if std_f0 <= 1e-6:
-        std_f0 = 1.0
-    return mean_f0, std_f0, int(concatenated.size)
-
-
-def fit_speaker_f0_statistics(
-    sample_parts: list[SampleFeatureParts],
-    *,
-    min_clips_per_speaker: int = 5,
-    warn: bool = True,
-) -> dict[str, Any]:
-    global_mean_f0, global_std_f0, global_voiced_frame_count = _global_f0_statistics(sample_parts)
-    grouped_parts: dict[str, list[SampleFeatureParts]] = {}
-    for item in sample_parts:
-        speaker_id = split_keyword_label(item.record.keyword)[1]
-        grouped_parts.setdefault(speaker_id, []).append(item)
-
-    speaker_stats: dict[str, Any] = {}
-    for speaker_id, speaker_parts in sorted(grouped_parts.items()):
-        clip_count = len(speaker_parts)
-        voiced_tracks = [
-            item.voiced_f0.astype(np.float64, copy=False)
-            for item in speaker_parts
-            if item.voiced_f0.size > 0
-        ]
-        use_global_fallback = clip_count < int(min_clips_per_speaker)
-        if use_global_fallback and warn:
-            print(
-                f"warning: speaker '{speaker_id}' has only {clip_count} clips; "
-                f"using global F0 statistics instead."
-            )
-        if voiced_tracks and not use_global_fallback:
-            concatenated = np.concatenate(voiced_tracks)
-            mean_f0 = float(np.mean(concatenated, dtype=np.float64))
-            std_f0 = float(np.std(concatenated, dtype=np.float64))
-            if std_f0 <= 1e-6:
-                std_f0 = 1.0
-            voiced_frame_count = int(concatenated.size)
-        else:
-            mean_f0 = global_mean_f0
-            std_f0 = global_std_f0
-            voiced_frame_count = int(sum(int(track.size) for track in voiced_tracks))
-        speaker_stats[speaker_id] = {
-            "mean_f0": float(mean_f0),
-            "std_f0": float(std_f0),
-            "clip_count": int(clip_count),
-            "voiced_frame_count": int(voiced_frame_count),
-            "fallback_to_global": bool(use_global_fallback),
-        }
-    return {
-        "version": 1,
-        "min_clips_per_speaker": int(min_clips_per_speaker),
-        "global": {
-            "mean_f0": float(global_mean_f0),
-            "std_f0": float(global_std_f0),
-            "clip_count": int(len(sample_parts)),
-            "voiced_frame_count": int(global_voiced_frame_count),
-        },
-        "speakers": speaker_stats,
-    }
-
-
-def _lookup_f0_statistics(
-    f0_statistics: dict[str, Any],
-    speaker_id: str,
-) -> tuple[float, float]:
-    global_stats = dict(f0_statistics.get("global", {}))
-    global_mean_f0 = float(global_stats.get("mean_f0", 0.0))
-    global_std_f0 = float(global_stats.get("std_f0", 1.0))
-    if global_std_f0 <= 1e-6:
-        global_std_f0 = 1.0
-    speaker_stats = dict(f0_statistics.get("speakers", {})).get(speaker_id)
-    if not isinstance(speaker_stats, dict):
-        return global_mean_f0, global_std_f0
-    mean_f0 = float(speaker_stats.get("mean_f0", global_mean_f0))
-    std_f0 = float(speaker_stats.get("std_f0", global_std_f0))
-    if std_f0 <= 1e-6:
-        std_f0 = global_std_f0
-    return mean_f0, std_f0
-
-
 def build_feature_vector_from_parts(
     item: SampleFeatureParts,
     *,
-    variant: str = "f0_contour",
-    f0_statistics: Optional[dict[str, Any]] = None,
-    speaker_id: Optional[str] = None,
+    variant: str = "f0_mean_std",
 ) -> np.ndarray:
     if variant not in FEATURE_VARIANTS:
         raise ValueError(f"Unsupported feature variant: {variant}")
@@ -371,39 +243,18 @@ def build_feature_vector_from_parts(
     if variant == "no_f0":
         return np.concatenate(base_vector).astype(np.float32)
 
-    if variant == "f0_mean_std":
-        voiced_f0 = item.voiced_f0.astype(np.float64, copy=False)
-        if voiced_f0.size > 0:
-            mean_f0 = float(np.mean(voiced_f0, dtype=np.float64))
-            std_f0 = float(np.std(voiced_f0, dtype=np.float64))
-        else:
-            mean_f0 = 0.0
-            std_f0 = 0.0
-        return np.concatenate(
-            [
-                item.mfcc_mean.astype(np.float32, copy=False),
-                item.mfcc_std.astype(np.float32, copy=False),
-                np.asarray([mean_f0, std_f0, item.voiced_ratio], dtype=np.float32),
-            ]
-        ).astype(np.float32)
-
-    if f0_statistics is None:
-        raise ValueError("f0_statistics are required for the f0_contour variant.")
-    resolved_speaker_id = speaker_id or split_keyword_label(item.record.keyword)[1]
-    speaker_mean_f0, speaker_std_f0 = _lookup_f0_statistics(f0_statistics, resolved_speaker_id)
-    resampled_f0, fully_unvoiced = resample_f0_contour(item.f0_contour, n_points=F0_CONTOUR_POINTS)
-    if fully_unvoiced:
-        normalized_contour = np.zeros(F0_CONTOUR_POINTS, dtype=np.float32)
+    voiced_f0 = item.voiced_f0.astype(np.float64, copy=False)
+    if voiced_f0.size > 0:
+        mean_f0 = float(np.mean(voiced_f0, dtype=np.float64))
+        std_f0 = float(np.std(voiced_f0, dtype=np.float64))
     else:
-        normalized_contour = (
-            (resampled_f0.astype(np.float64) - speaker_mean_f0) / max(speaker_std_f0, 1e-6)
-        ).astype(np.float32)
+        mean_f0 = 0.0
+        std_f0 = 0.0
     return np.concatenate(
         [
             item.mfcc_mean.astype(np.float32, copy=False),
             item.mfcc_std.astype(np.float32, copy=False),
-            np.asarray([item.voiced_ratio], dtype=np.float32),
-            normalized_contour.astype(np.float32, copy=False),
+            np.asarray([mean_f0, std_f0, item.voiced_ratio], dtype=np.float32),
         ]
     ).astype(np.float32)
 
@@ -411,83 +262,37 @@ def build_feature_vector_from_parts(
 def build_feature_matrix(
     sample_parts: list[SampleFeatureParts],
     *,
-    variant: str = "f0_contour",
-    f0_statistics: Optional[dict[str, Any]] = None,
-    min_clips_per_speaker: int = 5,
-    warn: bool = True,
-) -> tuple[np.ndarray, list[str], Optional[dict[str, Any]]]:
+    variant: str = "f0_mean_std",
+) -> tuple[np.ndarray, list[str]]:
     if not sample_parts:
-        return np.zeros((0, 0), dtype=np.float32), [], f0_statistics
+        return np.zeros((0, 0), dtype=np.float32), []
 
-    fitted_statistics = f0_statistics
-    if variant == "f0_contour" and fitted_statistics is None:
-        fitted_statistics = fit_speaker_f0_statistics(
-            sample_parts,
-            min_clips_per_speaker=min_clips_per_speaker,
-            warn=warn,
-        )
     vectors = [
         build_feature_vector_from_parts(
             item,
             variant=variant,
-            f0_statistics=fitted_statistics,
         )
         for item in sample_parts
     ]
     labels = [item.record.keyword for item in sample_parts]
-    return np.stack(vectors).astype(np.float32), labels, fitted_statistics
+    return np.stack(vectors).astype(np.float32), labels
 
 
 def build_sample_features(
     sample_parts: list[SampleFeatureParts],
     *,
-    f0_statistics: dict[str, Any],
+    variant: str = "f0_mean_std",
 ) -> list[SampleFeatures]:
     return [
         SampleFeatures(
             record=item.record,
             vector=build_feature_vector_from_parts(
                 item,
-                variant="f0_contour",
-                f0_statistics=f0_statistics,
+                variant=variant,
             ),
         )
         for item in sample_parts
     ]
-
-
-def build_f0_contour_sanity_examples(
-    sample_parts: list[SampleFeatureParts],
-    *,
-    f0_statistics: dict[str, Any],
-    n_points: int = F0_CONTOUR_POINTS,
-) -> list[dict[str, Any]]:
-    seen_keywords: set[str] = set()
-    examples: list[dict[str, Any]] = []
-    for item in sample_parts:
-        keyword = item.record.keyword
-        if keyword in seen_keywords:
-            continue
-        seen_keywords.add(keyword)
-        speaker_id = split_keyword_label(keyword)[1]
-        speaker_mean_f0, speaker_std_f0 = _lookup_f0_statistics(f0_statistics, speaker_id)
-        resampled_f0, fully_unvoiced = resample_f0_contour(item.f0_contour, n_points=n_points)
-        if fully_unvoiced:
-            normalized_contour = np.zeros(n_points, dtype=np.float32)
-        else:
-            normalized_contour = (
-                (resampled_f0.astype(np.float64) - speaker_mean_f0) / max(speaker_std_f0, 1e-6)
-            ).astype(np.float32)
-        examples.append(
-            {
-                "keyword": keyword,
-                "speaker_id": speaker_id,
-                "resampled_f0": resampled_f0.astype(float).tolist(),
-                "normalized_f0": normalized_contour.astype(float).tolist(),
-                "fully_unvoiced": bool(fully_unvoiced),
-            }
-        )
-    return examples
 
 
 def summarize_feature_vector(
@@ -495,9 +300,7 @@ def summarize_feature_vector(
     sample_rate: int,
     *,
     keyword: str = "keyword",
-    f0_statistics: Optional[dict[str, Any]] = None,
+    variant: str = "f0_mean_std",
 ) -> np.ndarray:
     parts = extract_feature_parts(_default_record_for_summary(keyword=keyword), samples, sample_rate)
-    if f0_statistics is None:
-        f0_statistics = fit_speaker_f0_statistics([parts], warn=False)
-    return build_sample_features([parts], f0_statistics=f0_statistics)[0].vector
+    return build_feature_vector_from_parts(parts, variant=variant)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -262,7 +262,7 @@ def plot_feature_dashboard(
         for point, item in zip(coordinates, sample_features):
             axes[0, 0].annotate(item.record.sample_id, (point[0], point[1]), fontsize=7, alpha=0.65)
 
-    figure.suptitle("MFCC + F0 Contour PCA Dashboard with All-PC Overview", fontsize=18)
+    figure.suptitle("MFCC + F0 Stats PCA Dashboard with All-PC Overview", fontsize=18)
     figure.tight_layout(rect=(0, 0, 1, 0.97))
     saved_path: Path | None = None
     if output_path is not None:
@@ -287,9 +287,7 @@ def build_feature_plot(
     config_path: Optional[str] = None,
     keyword: Optional[str] = None,
     samples_root: Optional[Path] = None,
-    f0_statistics: Optional[dict[str, Any]] = None,
-    min_clips_per_speaker: int = 5,
-    warn: bool = True,
+    variant: str = "f0_mean_std",
     output_path: Optional[Path] = None,
     show: bool = True,
     annotate: bool = False,
@@ -301,9 +299,7 @@ def build_feature_plot(
             project_root,
             Path(samples_root).resolve(),
             keyword=keyword,
-            f0_statistics=f0_statistics,
-            min_clips_per_speaker=min_clips_per_speaker,
-            warn=warn,
+            variant=variant,
         )
     else:
         manifest_path = (project_root / config.storage.manifest_path).resolve()
@@ -311,9 +307,7 @@ def build_feature_plot(
             project_root,
             manifest_path,
             keyword=keyword,
-            f0_statistics=f0_statistics,
-            min_clips_per_speaker=min_clips_per_speaker,
-            warn=warn,
+            variant=variant,
         )
     if not sample_features:
         raise RuntimeError("No saved samples found for feature extraction.")
@@ -330,7 +324,7 @@ def build_feature_plot(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Extract MFCC + speaker-normalized F0 contour features and plot a 2D feature space."
+        description="Extract MFCC + F0 summary features and plot a PCA dashboard."
     )
     parser.add_argument("--project-root", default=".", help="Project root containing src/ and data/.")
     parser.add_argument("--config", default=None, help="Optional YAML config override.")

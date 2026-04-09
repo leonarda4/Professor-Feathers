@@ -17,10 +17,8 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from features import (  # noqa: E402
-    build_feature_matrix,
-    load_sample_feature_parts_from_root,
-)
+from feature_core import build_feature_matrix  # noqa: E402
+from feature_loading import load_sample_feature_parts_from_root  # noqa: E402
 from knn_utils import (  # noqa: E402
     compute_accuracy,
     knn_predict,
@@ -125,7 +123,6 @@ def save_results_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def save_plot(path: Path, rows: list[dict[str, Any]]) -> None:
     variants = sorted({row["variant"] for row in rows})
     colors = {
-        "f0_contour": "#4C78A8",
         "f0_mean_std": "#F58518",
         "no_f0": "#54A24B",
     }
@@ -241,44 +238,24 @@ def main() -> int:
     train_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, train_root)
     test_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, test_root)
 
-    contour_train_vectors, contour_train_labels, contour_f0_stats = build_feature_matrix(
-        train_parts,
-        variant="f0_contour",
-    )
-    contour_test_vectors, contour_test_labels, _ = build_feature_matrix(
-        test_parts,
-        variant="f0_contour",
-        f0_statistics=contour_f0_stats,
-        warn=False,
-    )
-    mean_std_train_vectors, mean_std_train_labels, _ = build_feature_matrix(
+    mean_std_train_vectors, mean_std_train_labels = build_feature_matrix(
         train_parts,
         variant="f0_mean_std",
     )
-    mean_std_test_vectors, mean_std_test_labels, _ = build_feature_matrix(
+    mean_std_test_vectors, mean_std_test_labels = build_feature_matrix(
         test_parts,
         variant="f0_mean_std",
-        warn=False,
     )
-    no_f0_train_vectors, no_f0_train_labels, _ = build_feature_matrix(
+    no_f0_train_vectors, no_f0_train_labels = build_feature_matrix(
         train_parts,
         variant="no_f0",
     )
-    no_f0_test_vectors, no_f0_test_labels, _ = build_feature_matrix(
+    no_f0_test_vectors, no_f0_test_labels = build_feature_matrix(
         test_parts,
         variant="no_f0",
-        warn=False,
     )
 
     variant_payloads = [
-        {
-            "variant": "f0_contour",
-            "feature_dimension": int(contour_train_vectors.shape[1]),
-            "train_vectors": contour_train_vectors,
-            "train_labels": contour_train_labels,
-            "test_vectors": contour_test_vectors,
-            "test_labels": contour_test_labels,
-        },
         {
             "variant": "f0_mean_std",
             "feature_dimension": int(mean_std_train_vectors.shape[1]),
@@ -359,7 +336,6 @@ def main() -> int:
                 "test_ratio": float(args.test_ratio),
                 "k_values": k_values,
                 "split_counts": split_counts,
-                "contour_speaker_f0_statistics": contour_f0_stats,
                 "best_by_variant": best_by_variant,
                 "overall_winner": overall_winner,
             },

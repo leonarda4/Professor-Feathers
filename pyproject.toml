@@ -19,7 +19,7 @@ dependencies = [
 
 [project.scripts]
 pf-collect = "collect:main"
-pf-features = "features:main"
+pf-features = "feature_plotting:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -31,7 +31,6 @@ py-modules = [
   "feature_core",
   "feature_loading",
   "feature_plotting",
-  "features",
   "knn_utils",
   "storage",
 ]
