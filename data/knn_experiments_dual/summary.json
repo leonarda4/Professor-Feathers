@@ -1,72 +1,82 @@
 {
-  "holdout": [
-    {
-      "model": "base",
+  "base": {
+    "split_counts": {
+      "dance": {
+        "train": 256,
+        "test": 65
+      },
+      "sing": {
+        "train": 240,
+        "test": 60
+      }
+    },
+    "best_model": {
+      "folds": 5,
+      "requested_folds": 5,
       "k": 1,
-      "keyword_accuracy": 0.9541284403669725
+      "mean_validation_accuracy": 0.9899595959595959,
+      "std_validation_accuracy": 0.010954562918241952,
+      "fold_scores": [
+        0.97,
+        0.98989898989899,
+        0.98989898989899,
+        1.0,
+        1.0
+      ]
     },
-    {
-      "model": "base",
+    "test_accuracy_at_best_k": 0.992,
+    "confusion_labels": [
+      "dance",
+      "sing"
+    ],
+    "confusion_matrix": [
+      [
+        64,
+        1
+      ],
+      [
+        0,
+        60
+      ]
+    ]
+  },
+  "dynamic": {
+    "split_counts": {
+      "dance_001": {
+        "train": 16,
+        "test": 4
+      },
+      "sing_001": {
+        "train": 16,
+        "test": 4
+      }
+    },
+    "best_model": {
+      "folds": 3,
+      "requested_folds": 3,
       "k": 3,
-      "keyword_accuracy": 0.963302752293578
+      "mean_validation_accuracy": 0.9722222222222222,
+      "std_validation_accuracy": 0.039283710065919325,
+      "fold_scores": [
+        0.9166666666666666,
+        1.0,
+        1.0
+      ]
     },
-    {
-      "model": "base",
-      "k": 5,
-      "keyword_accuracy": 0.963302752293578
-    },
-    {
-      "model": "base",
-      "k": 7,
-      "keyword_accuracy": 0.9724770642201835
-    },
-    {
-      "model": "base",
-      "k": 9,
-      "keyword_accuracy": 0.9724770642201835
-    },
-    {
-      "model": "base",
-      "k": 11,
-      "keyword_accuracy": 0.9724770642201835
-    },
-    {
-      "model": "dynamic",
-      "k": 1,
-      "keyword_accuracy": 1.0,
-      "action_accuracy": 1.0
-    },
-    {
-      "model": "dynamic",
-      "k": 3,
-      "keyword_accuracy": 1.0,
-      "action_accuracy": 1.0
-    },
-    {
-      "model": "dynamic",
-      "k": 5,
-      "keyword_accuracy": 1.0,
-      "action_accuracy": 1.0
-    }
-  ],
-  "dynamic_keyword_generalization": [
-    {
-      "k": 1,
-      "mean_action_accuracy": NaN,
-      "std_action_accuracy": NaN,
-      "fold_count": 0
-    },
-    {
-      "k": 3,
-      "mean_action_accuracy": NaN,
-      "std_action_accuracy": NaN,
-      "fold_count": 0
-    },
-    {
-      "k": 5,
-      "mean_action_accuracy": NaN,
-      "std_action_accuracy": NaN,
-      "fold_count": 0
-    }
-  ]
+    "test_accuracy_at_best_k": 1.0,
+    "confusion_labels": [
+      "dance_001",
+      "sing_001"
+    ],
+    "confusion_matrix": [
+      [
+        4,
+        0
+      ],
+      [
+        0,
+        4
+      ]
+    ]
+  }
 }

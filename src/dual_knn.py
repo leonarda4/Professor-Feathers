@@ -90,7 +90,7 @@ class DynamicKeywordClassifier:
             delta_map: dict[str, np.ndarray] | None = None,
     ) -> "DynamicKeywordClassifier":
 
-        label_map = {item.record.sample_id: item.record.keyword for item in sample_parts}
+        label_map = {item.record.path: item.record.keyword for item in sample_parts}
 
         raw, labels = build_person_keyword_matrix(
             sample_parts,

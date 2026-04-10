@@ -115,7 +115,7 @@ def build_person_keyword_matrix(
     vectors = []
     labels = []
     for item in sample_parts:
-        delta = None if delta_map is None else delta_map.get(item.record.sample_id)
+        delta = None if delta_map is None else delta_map.get(item.record.path)
         vectors.append(build_person_keyword_vector(item, delta_mfcc_mean=delta))
-        labels.append(label_map[item.record.sample_id])
+        labels.append(label_map[item.record.path])
     return np.stack(vectors).astype(np.float32), labels

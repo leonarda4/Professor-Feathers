@@ -6,7 +6,7 @@ import json
 import math
 import shutil
 import sys
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +28,8 @@ DEFAULT_BASE_SOURCE_ROOT = PROJECT_ROOT / "data" / "base_keywords"
 DEFAULT_DYNAMIC_SOURCE_ROOT = PROJECT_ROOT / "data" / "dynamic_keywords"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "knn_experiments_dual"
 DEFAULT_BASE_K_VALUES = [1, 3, 5, 7, 9, 11]
-DEFAULT_DYNAMIC_K_VALUES = [1, 3, 5]
+DEFAULT_DYNAMIC_K_VALUES = [1, 3, 5, 7]
+DEFAULT_CV_FOLDS = [3, 5]
 DANCE_PREFIX = "dance"
 SING_PREFIX = "sing"
 
@@ -40,6 +41,10 @@ def infer_dynamic_action_label(keyword: str) -> str:
     if cleaned.startswith(f"{SING_PREFIX}_"):
         return "sing"
     return cleaned
+
+
+def dynamic_key(item: SampleFeatureParts) -> str:
+    return str(item.record.path)
 
 
 def reset_output_root(output_root: Path, *, force: bool) -> None:
@@ -57,72 +62,17 @@ def build_dynamic_delta_map(sample_parts: list[SampleFeatureParts], project_root
         if not sample_path.exists():
             continue
         samples, sample_rate = read_wav(sample_path)
-        delta_map[item.record.sample_id] = compute_delta_mfcc_mean(samples, sample_rate)
+        delta_map[dynamic_key(item)] = compute_delta_mfcc_mean(samples, sample_rate)
     return delta_map
 
 
-def evaluate_knn_grid(train_vectors, train_labels, test_vectors, test_labels, *, k_values, test_action_labels=None):
-    train_vectors_scaled, test_vectors_scaled, _ = standardize_feature_matrices(train_vectors, test_vectors)
-    rows = []
-    for k in k_values:
-        preds = knn_predict(train_vectors_scaled, train_labels, test_vectors_scaled, k=k)
-        predicted_labels = [item["predicted_label"] for item in preds]
-        row = {
-            "k": int(k),
-            "keyword_accuracy": float(compute_accuracy(test_labels, predicted_labels)),
-        }
-        if test_action_labels is not None:
-            predicted_action_labels = [infer_dynamic_action_label(label) for label in predicted_labels]
-            row["action_accuracy"] = float(compute_accuracy(test_action_labels, predicted_action_labels))
-        rows.append(row)
-    return rows
-
-
-def leave_one_keyword_out_indices(labels: list[str]) -> list[tuple[np.ndarray, np.ndarray]]:
-    grouped: dict[str, list[int]] = defaultdict(list)
-    for index, label in enumerate(labels):
-        grouped[label].append(index)
-    all_indices = np.arange(len(labels), dtype=int)
-    folds: list[tuple[np.ndarray, np.ndarray]] = []
-    for label, indices in sorted(grouped.items()):
-        test_indices = np.asarray(sorted(indices), dtype=int)
-        train_mask = np.ones(len(labels), dtype=bool)
-        train_mask[test_indices] = False
-        train_indices = all_indices[train_mask]
-        if train_indices.size == 0:
-            continue
-        folds.append((train_indices, test_indices))
-    return folds
-
-
-def evaluate_dynamic_keyword_generalization(vectors, labels, *, k_values):
-    folds = leave_one_keyword_out_indices(labels)
-    rows = []
-    for k in k_values:
-        action_fold_accuracies = []
-        for train_indices, test_indices in folds:
-            train_vectors = vectors[train_indices]
-            test_vectors = vectors[test_indices]
-            train_labels = [infer_dynamic_action_label(labels[i]) for i in train_indices]
-            test_action_labels = [infer_dynamic_action_label(labels[i]) for i in test_indices]
-            fold_rows = evaluate_knn_grid(
-                train_vectors,
-                train_labels,
-                test_vectors,
-                test_action_labels,
-                k_values=[k],
-                test_action_labels=test_action_labels,
-            )
-            action_fold_accuracies.append(float(fold_rows[0]["action_accuracy"]))
-        rows.append(
-            {
-                "k": int(k),
-                "mean_action_accuracy": float(np.mean(action_fold_accuracies, dtype=np.float64)),
-                "std_action_accuracy": float(np.std(action_fold_accuracies, dtype=np.float64)),
-                "fold_count": int(len(action_fold_accuracies)),
-            }
-        )
-    return rows
+def confusion_matrix_counts(true_labels: list[str], predicted_labels: list[str], labels: list[str]) -> list[list[int]]:
+    index = {label: i for i, label in enumerate(labels)}
+    matrix = [[0 for _ in labels] for _ in labels]
+    for true_label, predicted_label in zip(true_labels, predicted_labels):
+        if true_label in index and predicted_label in index:
+            matrix[index[true_label]][index[predicted_label]] += 1
+    return matrix
 
 
 def save_results_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
@@ -132,52 +82,6 @@ def save_results_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[st
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
-
-
-def save_plot(path: Path, holdout_rows: list[dict[str, Any]], generalization_rows: list[dict[str, Any]]) -> None:
-    figure, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-    base_rows = sorted([row for row in holdout_rows if row["model"] == "base"], key=lambda row: row["k"])
-    dyn_rows = sorted([row for row in holdout_rows if row["model"] == "dynamic"], key=lambda row: row["k"])
-    gen_rows = sorted(generalization_rows, key=lambda row: row["k"])
-
-    axes[0].plot([r["k"] for r in base_rows], [r["keyword_accuracy"] * 100 for r in base_rows], marker="o")
-    axes[0].set_title("Base holdout keyword accuracy")
-    axes[1].plot([r["k"] for r in dyn_rows], [r["keyword_accuracy"] * 100 for r in dyn_rows], marker="o", label="keyword")
-    axes[1].plot([r["k"] for r in dyn_rows], [r["action_accuracy"] * 100 for r in dyn_rows], marker="s", linestyle="--", label="action")
-    axes[1].set_title("Dynamic holdout accuracy")
-    axes[1].legend()
-    axes[2].errorbar(
-        [r["k"] for r in gen_rows],
-        [r["mean_action_accuracy"] * 100 for r in gen_rows],
-        yerr=[r["std_action_accuracy"] * 100 for r in gen_rows],
-        marker="o",
-        capsize=4,
-    )
-    axes[2].set_title("Dynamic leave-one-keyword-out")
-
-    for axis in axes:
-        axis.set_xlabel("k")
-        axis.set_ylabel("Accuracy (%)")
-        axis.grid(alpha=0.3)
-
-    figure.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path, dpi=180)
-    plt.close(figure)
-
-
-def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Evaluate dual KNN with harder dynamic validation.")
-    parser.add_argument("--base-source-root", type=Path, default=DEFAULT_BASE_SOURCE_ROOT)
-    parser.add_argument("--dynamic-source-root", type=Path, default=DEFAULT_DYNAMIC_SOURCE_ROOT)
-    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--test-ratio", type=float, default=0.2)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--base-k-values", type=int, nargs="+", default=DEFAULT_BASE_K_VALUES)
-    parser.add_argument("--dynamic-k-values", type=int, nargs="+", default=DEFAULT_DYNAMIC_K_VALUES)
-    parser.add_argument("--force", action="store_true")
-    return parser
 
 
 def split_indices_by_label(labels: list[str], test_ratio: float, seed: int):
@@ -196,12 +100,161 @@ def split_indices_by_label(labels: list[str], test_ratio: float, seed: int):
             test_count = len(shuffled) - 1
         label_test = sorted(shuffled[:test_count])
         label_train = sorted(shuffled[test_count:])
-        if not label_train:
+        if not label_train and label_test:
             label_train = [label_test.pop()]
         train_indices.extend(label_train)
         test_indices.extend(label_test)
         split_counts[label] = {"train": len(label_train), "test": len(label_test)}
     return np.asarray(sorted(train_indices), dtype=int), np.asarray(sorted(test_indices), dtype=int), split_counts
+
+
+def make_stratified_folds(labels: list[str], n_splits: int, seed: int) -> list[tuple[np.ndarray, np.ndarray]]:
+    grouped = defaultdict(list)
+    for idx, label in enumerate(labels):
+        grouped[label].append(idx)
+    if len(labels) == 0:
+        return []
+    min_count = min(len(v) for v in grouped.values())
+    effective_splits = max(2, min(int(n_splits), int(min_count))) if min_count >= 2 else 1
+    if effective_splits < 2:
+        return []
+    rng = np.random.default_rng(seed)
+    fold_buckets = [[] for _ in range(effective_splits)]
+    for label in sorted(grouped):
+        idxs = list(grouped[label])
+        rng.shuffle(idxs)
+        for pos, idx in enumerate(idxs):
+            fold_buckets[pos % effective_splits].append(idx)
+    all_indices = np.arange(len(labels), dtype=int)
+    folds = []
+    for bucket in fold_buckets:
+        test_idx = np.asarray(sorted(bucket), dtype=int)
+        mask = np.ones(len(labels), dtype=bool)
+        mask[test_idx] = False
+        train_idx = all_indices[mask]
+        if train_idx.size == 0 or test_idx.size == 0:
+            continue
+        folds.append((train_idx, test_idx))
+    return folds
+
+
+def evaluate_single_split(train_vectors, train_labels, test_vectors, test_labels, k: int) -> tuple[float, list[str]]:
+    train_scaled, test_scaled, _ = standardize_feature_matrices(train_vectors, test_vectors)
+    preds = knn_predict(train_scaled, train_labels, test_scaled, k=k)
+    predicted_labels = [item["predicted_label"] for item in preds]
+    return float(compute_accuracy(test_labels, predicted_labels)), predicted_labels
+
+
+def run_grid_search(vectors: np.ndarray, labels: list[str], *, k_values: list[int], fold_values: list[int], seed: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    best_row: dict[str, Any] | None = None
+    for folds in sorted({int(v) for v in fold_values if int(v) >= 2}):
+        split_folds = make_stratified_folds(labels, folds, seed)
+        if not split_folds:
+            continue
+        for k in sorted({int(v) for v in k_values if int(v) >= 1}):
+            fold_scores = []
+            for train_idx, val_idx in split_folds:
+                acc, _ = evaluate_single_split(
+                    vectors[train_idx],
+                    [labels[i] for i in train_idx],
+                    vectors[val_idx],
+                    [labels[i] for i in val_idx],
+                    k,
+                )
+                fold_scores.append(acc)
+            row = {
+                "folds": int(len(split_folds)),
+                "requested_folds": int(folds),
+                "k": int(k),
+                "mean_validation_accuracy": float(np.mean(fold_scores, dtype=np.float64)),
+                "std_validation_accuracy": float(np.std(fold_scores, dtype=np.float64)),
+                "fold_scores": [float(x) for x in fold_scores],
+            }
+            rows.append(row)
+            if best_row is None or (row["mean_validation_accuracy"], -row["k"], row["folds"]) > (
+                best_row["mean_validation_accuracy"],
+                -best_row["k"],
+                best_row["folds"],
+            ):
+                best_row = row
+    if best_row is None:
+        raise ValueError("Grid search could not build any validation folds.")
+    return rows, best_row
+
+
+def plot_best_model(path: Path, validation_grid_rows: list[dict[str, Any]], test_accuracy_rows: list[dict[str, Any]], *, best_k: int, best_folds: int, title_prefix: str) -> None:
+    val_rows = [row for row in validation_grid_rows if row["folds"] == best_folds]
+    val_rows = sorted(val_rows, key=lambda row: row["k"])
+    test_rows = sorted(test_accuracy_rows, key=lambda row: row["k"])
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    axes[0].plot([r["k"] for r in val_rows], [r["mean_validation_accuracy"] * 100 for r in val_rows], marker="o", label="Validation")
+    axes[0].axvline(best_k, color="tab:red", linestyle="--", alpha=0.7)
+    axes[0].set_title(f"{title_prefix} validation accuracy")
+    axes[0].set_xlabel("k")
+    axes[0].set_ylabel("Accuracy (%)")
+    axes[0].grid(alpha=0.3)
+
+    axes[1].plot([r["k"] for r in test_rows], [r["test_accuracy"] * 100 for r in test_rows], marker="s", color="tab:green", label="Test")
+    axes[1].axvline(best_k, color="tab:red", linestyle="--", alpha=0.7)
+    axes[1].set_title(f"{title_prefix} test accuracy")
+    axes[1].set_xlabel("k")
+    axes[1].set_ylabel("Accuracy (%)")
+    axes[1].grid(alpha=0.3)
+
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def plot_confusion_matrix(path: Path, matrix: list[list[int]], labels: list[str], title: str) -> None:
+    arr = np.asarray(matrix, dtype=np.int32)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(arr, cmap="Blues")
+    ax.set_title(title)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    ax.set_xticks(np.arange(len(labels)))
+    ax.set_yticks(np.arange(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_yticklabels(labels)
+    for i in range(arr.shape[0]):
+        for j in range(arr.shape[1]):
+            ax.text(j, i, str(arr[i, j]), ha="center", va="center", color="black")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def print_grid_rows(name: str, rows: list[dict[str, Any]]) -> None:
+    print(f"\n{name} grid search results:")
+    for row in sorted(rows, key=lambda r: (r["folds"], r["k"])):
+        scores = ", ".join(f"{x:.3f}" for x in row["fold_scores"])
+        print(
+            f"  folds={row['folds']}, k={row['k']}: "
+            f"val_mean={row['mean_validation_accuracy']:.3f}, "
+            f"val_std={row['std_validation_accuracy']:.3f}, "
+            f"fold_scores=[{scores}]"
+        )
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Grid search and cross-validation for dual KNN experiments.")
+    parser.add_argument("--base-source-root", type=Path, default=DEFAULT_BASE_SOURCE_ROOT)
+    parser.add_argument("--dynamic-source-root", type=Path, default=DEFAULT_DYNAMIC_SOURCE_ROOT)
+    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--test-ratio", type=float, default=0.2)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--base-k-values", type=int, nargs="+", default=DEFAULT_BASE_K_VALUES)
+    parser.add_argument("--dynamic-k-values", type=int, nargs="+", default=DEFAULT_DYNAMIC_K_VALUES)
+    parser.add_argument("--cv-fold-values", type=int, nargs="+", default=DEFAULT_CV_FOLDS)
+    parser.add_argument("--force", action="store_true")
+    return parser
 
 
 def main() -> int:
@@ -213,56 +266,142 @@ def main() -> int:
 
     base_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, base_source_root)
     dynamic_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, dynamic_source_root)
+
     base_vectors, base_labels = build_keyword_matrix(base_parts)
-    dynamic_label_map = {item.record.sample_id: item.record.keyword for item in dynamic_parts}
+
+    dynamic_label_map = {dynamic_key(item): item.record.keyword for item in dynamic_parts}
     dynamic_delta_map = build_dynamic_delta_map(dynamic_parts, PROJECT_ROOT)
-    dynamic_vectors, dynamic_labels = build_person_keyword_matrix(dynamic_parts, label_map=dynamic_label_map, delta_map=dynamic_delta_map)
-    dynamic_action_labels = [infer_dynamic_action_label(label) for label in dynamic_labels]
+    dynamic_vectors, dynamic_labels = build_person_keyword_matrix(
+        dynamic_parts,
+        label_map=dynamic_label_map,
+        delta_map=dynamic_delta_map,
+    )
 
-    holdout_rows = []
+    base_train_idx, base_test_idx, base_split_counts = split_indices_by_label(base_labels, float(args.test_ratio), int(args.seed))
+    dyn_train_idx, dyn_test_idx, dyn_split_counts = split_indices_by_label(dynamic_labels, float(args.test_ratio), int(args.seed))
 
-    base_train_idx, base_test_idx, _ = split_indices_by_label(base_labels, float(args.test_ratio), int(args.seed))
-    for row in evaluate_knn_grid(
+    base_k_values = sorted({int(v) for v in args.base_k_values if int(v) >= 1})
+    dynamic_k_values = sorted({int(v) for v in args.dynamic_k_values if int(v) >= 1})
+    cv_fold_values = sorted({int(v) for v in args.cv_fold_values if int(v) >= 2})
+
+    base_grid_rows, base_best = run_grid_search(
         base_vectors[base_train_idx],
         [base_labels[i] for i in base_train_idx],
-        base_vectors[base_test_idx],
-        [base_labels[i] for i in base_test_idx],
-        k_values=sorted({int(v) for v in args.base_k_values if int(v) >= 1}),
-    ):
-        holdout_rows.append({"model": "base", **row})
-
-    dyn_train_idx, dyn_test_idx, _ = split_indices_by_label(dynamic_labels, float(args.test_ratio), int(args.seed))
-    for row in evaluate_knn_grid(
+        k_values=base_k_values,
+        fold_values=cv_fold_values,
+        seed=int(args.seed),
+    )
+    dynamic_grid_rows, dynamic_best = run_grid_search(
         dynamic_vectors[dyn_train_idx],
         [dynamic_labels[i] for i in dyn_train_idx],
-        dynamic_vectors[dyn_test_idx],
-        [dynamic_labels[i] for i in dyn_test_idx],
-        k_values=sorted({int(v) for v in args.dynamic_k_values if int(v) >= 1}),
-        test_action_labels=[dynamic_action_labels[i] for i in dyn_test_idx],
-    ):
-        holdout_rows.append({"model": "dynamic", **row})
-
-    generalization_rows = evaluate_dynamic_keyword_generalization(
-        dynamic_vectors,
-        dynamic_labels,
-        k_values=sorted({int(v) for v in args.dynamic_k_values if int(v) >= 1}),
+        k_values=dynamic_k_values,
+        fold_values=cv_fold_values,
+        seed=int(args.seed),
     )
+
+    print_grid_rows("Base", base_grid_rows)
+    print_grid_rows("Dynamic", dynamic_grid_rows)
+
+    base_test_rows = []
+    for k in base_k_values:
+        test_acc, preds = evaluate_single_split(
+            base_vectors[base_train_idx],
+            [base_labels[i] for i in base_train_idx],
+            base_vectors[base_test_idx],
+            [base_labels[i] for i in base_test_idx],
+            k,
+        )
+        base_test_rows.append({"k": int(k), "test_accuracy": float(test_acc)})
+        if k == base_best["k"]:
+            base_best_preds = preds
+
+    dynamic_test_rows = []
+    for k in dynamic_k_values:
+        test_acc, preds = evaluate_single_split(
+            dynamic_vectors[dyn_train_idx],
+            [dynamic_labels[i] for i in dyn_train_idx],
+            dynamic_vectors[dyn_test_idx],
+            [dynamic_labels[i] for i in dyn_test_idx],
+            k,
+        )
+        dynamic_test_rows.append({"k": int(k), "test_accuracy": float(test_acc)})
+        if k == dynamic_best["k"]:
+            dynamic_best_preds = preds
+
+    base_test_labels = [base_labels[i] for i in base_test_idx]
+    dynamic_test_labels = [dynamic_labels[i] for i in dyn_test_idx]
+
+    base_conf_labels = sorted(set(base_test_labels) | set(base_best_preds))
+    dynamic_conf_labels = sorted(set(dynamic_test_labels) | set(dynamic_best_preds))
+
+    base_conf = confusion_matrix_counts(base_test_labels, base_best_preds, base_conf_labels)
+    dynamic_conf = confusion_matrix_counts(dynamic_test_labels, dynamic_best_preds, dynamic_conf_labels)
 
     save_results_csv(
-        output_root / "holdout_results.csv",
-        holdout_rows,
-        ["model", "k", "keyword_accuracy", "action_accuracy"],
+        output_root / "base_grid_search.csv",
+        [{**row, "fold_scores": json.dumps(row["fold_scores"])} for row in base_grid_rows],
+        ["requested_folds", "folds", "k", "mean_validation_accuracy", "std_validation_accuracy", "fold_scores"],
     )
     save_results_csv(
-        output_root / "dynamic_keyword_generalization.csv",
-        generalization_rows,
-        ["k", "mean_action_accuracy", "std_action_accuracy", "fold_count"],
+        output_root / "dynamic_grid_search.csv",
+        [{**row, "fold_scores": json.dumps(row["fold_scores"])} for row in dynamic_grid_rows],
+        ["requested_folds", "folds", "k", "mean_validation_accuracy", "std_validation_accuracy", "fold_scores"],
     )
-    save_plot(output_root / "accuracy.png", holdout_rows, generalization_rows)
+    save_results_csv(output_root / "base_test_accuracy.csv", base_test_rows, ["k", "test_accuracy"])
+    save_results_csv(output_root / "dynamic_test_accuracy.csv", dynamic_test_rows, ["k", "test_accuracy"])
+    save_results_csv(
+        output_root / "base_confusion_matrix.csv",
+        [{"true_label": label, **{pred: count for pred, count in zip(base_conf_labels, row)}} for label, row in zip(base_conf_labels, base_conf)],
+        ["true_label", *base_conf_labels],
+    )
+    save_results_csv(
+        output_root / "dynamic_confusion_matrix.csv",
+        [{"true_label": label, **{pred: count for pred, count in zip(dynamic_conf_labels, row)}} for label, row in zip(dynamic_conf_labels, dynamic_conf)],
+        ["true_label", *dynamic_conf_labels],
+    )
 
+    plot_best_model(
+        output_root / "base_best_model_accuracy.png",
+        base_grid_rows,
+        base_test_rows,
+        best_k=base_best["k"],
+        best_folds=base_best["folds"],
+        title_prefix="Base",
+    )
+    plot_best_model(
+        output_root / "dynamic_best_model_accuracy.png",
+        dynamic_grid_rows,
+        dynamic_test_rows,
+        best_k=dynamic_best["k"],
+        best_folds=dynamic_best["folds"],
+        title_prefix="Dynamic",
+    )
+    plot_confusion_matrix(output_root / "base_confusion_matrix.png", base_conf, base_conf_labels, "Base confusion matrix")
+    plot_confusion_matrix(output_root / "dynamic_confusion_matrix.png", dynamic_conf, dynamic_conf_labels, "Dynamic confusion matrix")
+
+    summary = {
+        "base": {
+            "split_counts": base_split_counts,
+            "best_model": base_best,
+            "test_accuracy_at_best_k": next(row["test_accuracy"] for row in base_test_rows if row["k"] == base_best["k"]),
+            "confusion_labels": base_conf_labels,
+            "confusion_matrix": base_conf,
+        },
+        "dynamic": {
+            "split_counts": dyn_split_counts,
+            "best_model": dynamic_best,
+            "test_accuracy_at_best_k": next(row["test_accuracy"] for row in dynamic_test_rows if row["k"] == dynamic_best["k"]),
+            "confusion_labels": dynamic_conf_labels,
+            "confusion_matrix": dynamic_conf,
+        },
+    }
     with (output_root / "summary.json").open("w", encoding="utf-8") as handle:
-        json.dump({"holdout": holdout_rows, "dynamic_keyword_generalization": generalization_rows}, handle, indent=2)
+        json.dump(summary, handle, indent=2)
         handle.write("\n")
+
+    print("\nBest base model:", json.dumps(base_best, indent=2))
+    print("Best dynamic model:", json.dumps(dynamic_best, indent=2))
+    print(f"Outputs written to: {output_root}")
     return 0
 
 

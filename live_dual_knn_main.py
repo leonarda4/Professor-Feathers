@@ -157,7 +157,7 @@ def _infer_action_label(keyword: str) -> str:
 
 
 def _build_dynamic_label_map(sample_parts) -> dict[str, str]:
-    return {item.record.sample_id: _infer_action_label(item.record.keyword) for item in sample_parts}
+    return {item.record.path: _infer_action_label(item.record.keyword) for item in sample_parts}
 
 
 def _build_dynamic_delta_map(sample_parts, project_root: Path) -> dict[str, np.ndarray]:
@@ -169,7 +169,7 @@ def _build_dynamic_delta_map(sample_parts, project_root: Path) -> dict[str, np.n
         if not sample_path.exists():
             continue
         samples, sample_rate = read_wav(sample_path)
-        delta_map[item.record.sample_id] = compute_delta_mfcc_mean(samples, sample_rate)
+        delta_map[item.record.path] = compute_delta_mfcc_mean(samples, sample_rate)
     return delta_map
 
 def prepare_dynamic_classifier(project_root: Path, dynamic_source_root: Path):
@@ -182,7 +182,6 @@ def prepare_dynamic_classifier(project_root: Path, dynamic_source_root: Path):
         delta_map = _build_dynamic_delta_map(dynamic_parts, project_root)
         dynamic_classifier = DynamicKeywordClassifier(k=DYNAMIC_K).fit(dynamic_parts,
                                                                        delta_map=delta_map if delta_map else None)
-        dynamic_classifier = dynamic_classifier.fit(dynamic_parts)
         dynamic_unknown_distance_threshold = (
             float(DYNAMIC_UNKNOWN_DISTANCE_THRESHOLD)
             if DYNAMIC_UNKNOWN_DISTANCE_THRESHOLD is not None
