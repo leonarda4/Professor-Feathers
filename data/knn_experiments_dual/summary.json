@@ -1,0 +1,72 @@
+{
+  "holdout": [
+    {
+      "model": "base",
+      "k": 1,
+      "keyword_accuracy": 0.9541284403669725
+    },
+    {
+      "model": "base",
+      "k": 3,
+      "keyword_accuracy": 0.963302752293578
+    },
+    {
+      "model": "base",
+      "k": 5,
+      "keyword_accuracy": 0.963302752293578
+    },
+    {
+      "model": "base",
+      "k": 7,
+      "keyword_accuracy": 0.9724770642201835
+    },
+    {
+      "model": "base",
+      "k": 9,
+      "keyword_accuracy": 0.9724770642201835
+    },
+    {
+      "model": "base",
+      "k": 11,
+      "keyword_accuracy": 0.9724770642201835
+    },
+    {
+      "model": "dynamic",
+      "k": 1,
+      "keyword_accuracy": 1.0,
+      "action_accuracy": 1.0
+    },
+    {
+      "model": "dynamic",
+      "k": 3,
+      "keyword_accuracy": 1.0,
+      "action_accuracy": 1.0
+    },
+    {
+      "model": "dynamic",
+      "k": 5,
+      "keyword_accuracy": 1.0,
+      "action_accuracy": 1.0
+    }
+  ],
+  "dynamic_keyword_generalization": [
+    {
+      "k": 1,
+      "mean_action_accuracy": NaN,
+      "std_action_accuracy": NaN,
+      "fold_count": 0
+    },
+    {
+      "k": 3,
+      "mean_action_accuracy": NaN,
+      "std_action_accuracy": NaN,
+      "fold_count": 0
+    },
+    {
+      "k": 5,
+      "mean_action_accuracy": NaN,
+      "std_action_accuracy": NaN,
+      "fold_count": 0
+    }
+  ]
+}

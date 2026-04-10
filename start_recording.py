@@ -14,7 +14,7 @@ from config import load_app_config
 
 
 # Edit these values before running this file from the IDE.
-KEYWORD = "keyword"  
+KEYWORD = "sing11"
 CONFIG_PATH = None
 ARM_KEY = None
 QUIT_KEY = None

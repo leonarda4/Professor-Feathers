@@ -76,27 +76,34 @@ class KeywordClassifier:
 
 
 @dataclass
-class PersonKeywordClassifier:
-    target_label: str = "target"
-    negative_label: str = "other"
-    k: int = 3
+class DynamicKeywordClassifier:
+    k: int = 1
     _train_vectors: np.ndarray = field(default_factory=lambda: np.zeros((0, 0), dtype=np.float32))
     _train_labels: list[str] = field(default_factory=list)
     _normalizer: OnlineFeatureNormalizer = field(default_factory=OnlineFeatureNormalizer)
     _fitted: bool = field(default=False, init=False, repr=False)
 
     def fit(
-        self,
-        sample_parts: list[SampleFeatureParts],
-        *,
-        label_map: dict[str, str],
-        delta_map: dict[str, np.ndarray] | None = None,
-    ) -> "PersonKeywordClassifier":
-        raw, labels = build_person_keyword_matrix(sample_parts, label_map=label_map, delta_map=delta_map)
+            self,
+            sample_parts: list[SampleFeatureParts],
+            *,
+            delta_map: dict[str, np.ndarray] | None = None,
+    ) -> "DynamicKeywordClassifier":
+
+        label_map = {item.record.sample_id: item.record.keyword for item in sample_parts}
+
+        raw, labels = build_person_keyword_matrix(
+            sample_parts,
+            label_map=label_map,
+            delta_map=delta_map,
+        )
+
         if raw.size == 0:
-            raise ValueError("Need at least one person-keyword sample.")
-        self._normalizer.fit(raw)
-        self._train_vectors = np.stack([self._normalizer.transform(v) for v in raw]).astype(np.float32)
+            raise ValueError("Need at least one dynamic keyword sample.")
+
+        self._normalizer = OnlineFeatureNormalizer().fit(raw)
+        self._train_vectors = self._normalizer.transform(raw)
+
         self._train_labels = labels
         self._fitted = True
         return self
@@ -120,9 +127,14 @@ class PersonKeywordClassifier:
         self._check_fitted()
         single = isinstance(parts, SampleFeatureParts)
         items = [parts] if single else parts
-        scaled = np.stack([
-            self.transform_vector(item, delta_mfcc_mean=delta_mfcc_mean) for item in items
-        ]).astype(np.float32)
+        if single:
+            scaled = np.stack([
+                self.transform_vector(items[0], delta_mfcc_mean=delta_mfcc_mean)
+            ]).astype(np.float32)
+        else:
+            scaled = np.stack([
+                self.transform_vector(item, delta_mfcc_mean=delta_mfcc_mean) for item in items
+            ]).astype(np.float32)
         results = knn_predict(self._train_vectors, self._train_labels, scaled, k=self.k)
         return results[0] if single else results
 
@@ -134,24 +146,6 @@ class PersonKeywordClassifier:
     ) -> float:
         vec = self.transform_vector(parts, delta_mfcc_mean=delta_mfcc_mean)
         return _mean_k_neighbor_distance(self._train_vectors, vec, k=self.k)
-
-    def add_sample(
-        self,
-        parts: SampleFeatureParts,
-        label: str,
-        *,
-        delta_mfcc_mean: np.ndarray | None = None,
-    ) -> None:
-        raw = build_person_keyword_vector(parts, delta_mfcc_mean=delta_mfcc_mean)
-        self._normalizer.update(raw)
-        scaled = self._normalizer.transform(raw).reshape(1, -1)
-        if not self._fitted or self._train_vectors.size == 0:
-            self._train_vectors = scaled.astype(np.float32)
-            self._train_labels = [label]
-            self._fitted = True
-        else:
-            self._train_vectors = np.vstack([self._train_vectors, scaled]).astype(np.float32)
-            self._train_labels.append(label)
 
     def evaluate(
         self,

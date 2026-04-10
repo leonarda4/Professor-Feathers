@@ -25,7 +25,7 @@ from collect import (
     start_hotkey_listener,
 )
 from config import load_app_config
-from dual_knn import KeywordClassifier, PersonKeywordClassifier
+from dual_knn import KeywordClassifier, DynamicKeywordClassifier
 from features.feature_core import extract_feature_parts
 from features.feature_loading import load_sample_feature_parts_from_root
 from features.feature_spaces import compute_delta_mfcc_mean
@@ -84,7 +84,7 @@ class DualLiveModel:
     base_source_root: Path
     dynamic_source_root: Path
     base_classifier: KeywordClassifier
-    dynamic_classifier: PersonKeywordClassifier | None
+    dynamic_classifier: DynamicKeywordClassifier | None
     base_unknown_distance_threshold: float
     dynamic_unknown_distance_threshold: float
     dynamic_uses_delta: bool
@@ -172,6 +172,30 @@ def _build_dynamic_delta_map(sample_parts, project_root: Path) -> dict[str, np.n
         delta_map[item.record.sample_id] = compute_delta_mfcc_mean(samples, sample_rate)
     return delta_map
 
+def prepare_dynamic_classifier(project_root: Path, dynamic_source_root: Path):
+    dynamic_parts = []
+    if Path(dynamic_source_root).exists():
+        dynamic_parts = load_sample_feature_parts_from_root(project_root, dynamic_source_root)
+    dynamic_classifier: DynamicKeywordClassifier | None = None
+    dynamic_unknown_distance_threshold = float("inf")
+    if dynamic_parts:
+        delta_map = _build_dynamic_delta_map(dynamic_parts, project_root)
+        dynamic_classifier = DynamicKeywordClassifier(k=DYNAMIC_K).fit(dynamic_parts,
+                                                                       delta_map=delta_map if delta_map else None)
+        dynamic_classifier = dynamic_classifier.fit(dynamic_parts)
+        dynamic_unknown_distance_threshold = (
+            float(DYNAMIC_UNKNOWN_DISTANCE_THRESHOLD)
+            if DYNAMIC_UNKNOWN_DISTANCE_THRESHOLD is not None
+            else _auto_unknown_distance_threshold(
+                dynamic_classifier._train_vectors,
+                k=dynamic_classifier.k,
+                percentile=DYNAMIC_UNKNOWN_DISTANCE_PERCENTILE,
+                margin=DYNAMIC_UNKNOWN_DISTANCE_MARGIN,
+            )
+        )
+
+    return dynamic_classifier, dynamic_unknown_distance_threshold
+
 
 def prepare_dual_live_model(
     *,
@@ -183,6 +207,7 @@ def prepare_dual_live_model(
     if not base_parts:
         raise ValueError(f"No base keyword samples found under {base_source_root}")
     base_classifier = KeywordClassifier(k=BASE_K).fit(base_parts)
+    base_classifier = base_classifier.fit(base_parts)
     base_unknown_distance_threshold = (
         float(BASE_UNKNOWN_DISTANCE_THRESHOLD)
         if BASE_UNKNOWN_DISTANCE_THRESHOLD is not None
@@ -194,29 +219,7 @@ def prepare_dual_live_model(
         )
     )
 
-    dynamic_parts = []
-    if Path(dynamic_source_root).exists():
-        dynamic_parts = load_sample_feature_parts_from_root(project_root, dynamic_source_root)
-    dynamic_classifier: PersonKeywordClassifier | None = None
-    dynamic_unknown_distance_threshold = float("inf")
-    if dynamic_parts:
-        label_map = _build_dynamic_label_map(dynamic_parts)
-        delta_map = _build_dynamic_delta_map(dynamic_parts, project_root)
-        dynamic_classifier = PersonKeywordClassifier(
-            target_label=DANCE_ACTION_LABEL,
-            negative_label=SING_ACTION_LABEL,
-            k=DYNAMIC_K,
-        ).fit(dynamic_parts, label_map=label_map, delta_map=delta_map if delta_map else None)
-        dynamic_unknown_distance_threshold = (
-            float(DYNAMIC_UNKNOWN_DISTANCE_THRESHOLD)
-            if DYNAMIC_UNKNOWN_DISTANCE_THRESHOLD is not None
-            else _auto_unknown_distance_threshold(
-                dynamic_classifier._train_vectors,
-                k=dynamic_classifier.k,
-                percentile=DYNAMIC_UNKNOWN_DISTANCE_PERCENTILE,
-                margin=DYNAMIC_UNKNOWN_DISTANCE_MARGIN,
-            )
-        )
+    dynamic_classifier, dynamic_unknown_distance_threshold = prepare_dynamic_classifier(project_root, dynamic_source_root)
 
     return DualLiveModel(
         base_source_root=Path(base_source_root).resolve(),
@@ -318,21 +321,10 @@ def _begin_learning_batch(*, source_root: Path, action_label: str, batch_size: i
     )
 
 
-def _reload_model(model: DualLiveModel) -> DualLiveModel:
+def _reload_model(model: DualLiveModel):
     print("Rebuilding classifiers with the updated datasets...")
-    refreshed = prepare_dual_live_model(
-        project_root=PROJECT_ROOT,
-        base_source_root=model.base_source_root,
-        dynamic_source_root=model.dynamic_source_root,
-    )
-    dynamic_count = 0 if refreshed.dynamic_classifier is None else len(refreshed.dynamic_classifier._train_labels)
-    dynamic_dim = 0 if refreshed.dynamic_classifier is None or refreshed.dynamic_classifier._train_vectors.size == 0 else refreshed.dynamic_classifier._train_vectors.shape[1]
-    print(
-        f"Classifiers updated. base_samples={len(refreshed.base_classifier._train_labels)}, "
-        f"base_dim={refreshed.base_classifier._train_vectors.shape[1]}, "
-        f"dynamic_samples={dynamic_count}, dynamic_dim={dynamic_dim}."
-    )
-    return refreshed
+    retrained_clf = prepare_dynamic_classifier(project_root=PROJECT_ROOT, dynamic_source_root=model.dynamic_source_root)[0]
+    return retrained_clf
 
 
 def _perform_action(action_label: str) -> None:
@@ -487,7 +479,7 @@ def run_live_dual_classification(
                         if current_learning is not None:
                             print(
                                 f"Discarded short noise while learning {current_learning.batch.keyword} "
-                                f"({event.speech_ms} ms speech, {event.trailing_silence_m} ms trailing silence)."
+                                f"({event.speech_ms} ms speech, {event.trailing_silence_ms} ms trailing silence)."
                             )
                         continue
                     if event.kind != "utterance" or event.audio is None or event.audio.size == 0:
@@ -513,7 +505,7 @@ def run_live_dual_classification(
                             f"Finished learning batch {current_learning.batch.keyword} for action {current_learning.action_label}. "
                             f"Updating dynamic classifier."
                         )
-                        model = _reload_model(model)
+                        model.dynamic_classifier = _reload_model(model)
                         current_learning = None
                         endpointer.arm()
                         print("Continuous listening resumed.")

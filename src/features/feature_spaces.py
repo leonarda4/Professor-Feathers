@@ -89,8 +89,10 @@ def build_person_keyword_vector(
         parts.mfcc_std.astype(np.float32),
         np.asarray([f0_mean, f0_std, parts.voiced_ratio], dtype=np.float32),
     ]
-    if delta_mfcc_mean is not None:
-        pieces.append(np.asarray(delta_mfcc_mean, dtype=np.float32))
+    if delta_mfcc_mean is None:
+        delta_mfcc_mean = np.zeros(13, dtype=np.float32)
+
+    pieces.append(np.asarray(delta_mfcc_mean, dtype=np.float32))
     return np.concatenate(pieces).astype(np.float32)
 
 
