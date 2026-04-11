@@ -2,47 +2,77 @@
   "base": {
     "split_counts": {
       "dance": {
-        "train": 256,
-        "test": 65
+        "train": 1027,
+        "test": 257
       },
       "sing": {
-        "train": 240,
-        "test": 60
+        "train": 960,
+        "test": 240
       }
     },
     "best_model": {
-      "folds": 5,
-      "requested_folds": 5,
+      "folds": 3,
+      "requested_folds": 3,
       "k": 1,
-      "mean_validation_accuracy": 0.9899595959595959,
-      "std_validation_accuracy": 0.010954562918241952,
+      "mean_validation_accuracy": 0.9949670316650945,
+      "std_validation_accuracy": 0.0018846283930454239,
+      "mean_validation_macro_f1": 0.9949614064039971,
+      "mean_validation_weighted_f1": 0.9949670669477296,
       "fold_scores": [
-        0.97,
-        0.98989898989899,
-        0.98989898989899,
-        1.0,
-        1.0
+        0.995475113122172,
+        0.9969788519637462,
+        0.9924471299093656
       ]
     },
-    "test_accuracy_at_best_k": 0.992,
+    "test_metrics_at_best_k": {
+      "k": 1,
+      "accuracy": 0.993963782696177,
+      "macro_precision": 0.993897497406639,
+      "macro_recall": 0.9940256160830091,
+      "macro_f1": 0.9939575202733097,
+      "weighted_precision": 0.9939726207347821,
+      "weighted_recall": 0.993963782696177,
+      "weighted_f1": 0.9939641740976063
+    },
+    "per_class_metrics": [
+      {
+        "label": "dance",
+        "precision": 0.99609375,
+        "recall": 0.9922178988326849,
+        "f1": 0.9941520467836258,
+        "support": 257
+      },
+      {
+        "label": "sing",
+        "precision": 0.991701244813278,
+        "recall": 0.9958333333333333,
+        "f1": 0.9937629937629938,
+        "support": 240
+      }
+    ],
     "confusion_labels": [
       "dance",
       "sing"
     ],
     "confusion_matrix": [
       [
-        64,
-        1
+        255,
+        2
       ],
       [
-        0,
-        60
+        1,
+        239
       ]
-    ]
+    ],
+    "test_label_count": 497
   },
   "dynamic": {
     "split_counts": {
       "dance_001": {
+        "train": 16,
+        "test": 4
+      },
+      "dance_002": {
         "train": 16,
         "test": 4
       },
@@ -54,29 +84,72 @@
     "best_model": {
       "folds": 3,
       "requested_folds": 3,
-      "k": 3,
-      "mean_validation_accuracy": 0.9722222222222222,
-      "std_validation_accuracy": 0.039283710065919325,
+      "k": 1,
+      "mean_validation_accuracy": 0.9814814814814815,
+      "std_validation_accuracy": 0.026189140043946214,
+      "mean_validation_macro_f1": 0.9813519813519814,
+      "mean_validation_weighted_f1": 0.9813519813519814,
       "fold_scores": [
-        0.9166666666666666,
+        0.9444444444444444,
         1.0,
         1.0
       ]
     },
-    "test_accuracy_at_best_k": 1.0,
+    "test_metrics_at_best_k": {
+      "k": 1,
+      "accuracy": 1.0,
+      "macro_precision": 1.0,
+      "macro_recall": 1.0,
+      "macro_f1": 1.0,
+      "weighted_precision": 1.0,
+      "weighted_recall": 1.0,
+      "weighted_f1": 1.0
+    },
+    "per_class_metrics": [
+      {
+        "label": "dance_001",
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      {
+        "label": "dance_002",
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      {
+        "label": "sing_001",
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      }
+    ],
     "confusion_labels": [
       "dance_001",
+      "dance_002",
       "sing_001"
     ],
     "confusion_matrix": [
       [
         4,
+        0,
         0
       ],
       [
         0,
+        4,
+        0
+      ],
+      [
+        0,
+        0,
         4
       ]
-    ]
+    ],
+    "test_label_count": 12
   }
 }

@@ -13,15 +13,21 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
+from data_augmentation import AugmentationConfig, build_augmented_feature_parts
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from audio import read_wav  # noqa: E402
-from features.feature_core import SampleFeatureParts  # noqa: E402
+from features.feature_core import PcaResult, SampleFeatureParts, SampleFeatures  # noqa: E402
 from features.feature_loading import load_sample_feature_parts_from_root  # noqa: E402
-from features.feature_spaces import build_keyword_matrix, build_person_keyword_matrix, compute_delta_mfcc_mean  # noqa: E402
+from features.feature_spaces import (  # noqa: E402
+    build_keyword_matrix,
+    build_person_keyword_matrix,
+    compute_delta_mfcc_mean,
+)
 from knn_utils import compute_accuracy, knn_predict, standardize_feature_matrices  # noqa: E402
 
 DEFAULT_BASE_SOURCE_ROOT = PROJECT_ROOT / "data" / "base_keywords"
@@ -73,6 +79,61 @@ def confusion_matrix_counts(true_labels: list[str], predicted_labels: list[str],
         if true_label in index and predicted_label in index:
             matrix[index[true_label]][index[predicted_label]] += 1
     return matrix
+
+
+def compute_classification_metrics(true_labels: list[str], predicted_labels: list[str]) -> dict[str, Any]:
+    labels = sorted(set(true_labels) | set(predicted_labels))
+    matrix = np.asarray(confusion_matrix_counts(true_labels, predicted_labels, labels), dtype=np.float64)
+    total = float(np.sum(matrix))
+    accuracy = float(np.trace(matrix) / total) if total > 0 else 0.0
+
+    per_class: list[dict[str, Any]] = []
+    precisions: list[float] = []
+    recalls: list[float] = []
+    f1s: list[float] = []
+    supports: list[int] = []
+
+    for idx, label in enumerate(labels):
+        tp = float(matrix[idx, idx])
+        fp = float(np.sum(matrix[:, idx]) - tp)
+        fn = float(np.sum(matrix[idx, :]) - tp)
+        support = int(np.sum(matrix[idx, :]))
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = (2.0 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+        per_class.append(
+            {
+                "label": label,
+                "precision": float(precision),
+                "recall": float(recall),
+                "f1": float(f1),
+                "support": support,
+            }
+        )
+        precisions.append(float(precision))
+        recalls.append(float(recall))
+        f1s.append(float(f1))
+        supports.append(support)
+
+    macro_precision = float(np.mean(precisions, dtype=np.float64)) if precisions else 0.0
+    macro_recall = float(np.mean(recalls, dtype=np.float64)) if recalls else 0.0
+    macro_f1 = float(np.mean(f1s, dtype=np.float64)) if f1s else 0.0
+    weighted_precision = float(np.average(precisions, weights=supports)) if supports and sum(supports) > 0 else 0.0
+    weighted_recall = float(np.average(recalls, weights=supports)) if supports and sum(supports) > 0 else 0.0
+    weighted_f1 = float(np.average(f1s, weights=supports)) if supports and sum(supports) > 0 else 0.0
+
+    return {
+        "labels": labels,
+        "accuracy": accuracy,
+        "macro_precision": macro_precision,
+        "macro_recall": macro_recall,
+        "macro_f1": macro_f1,
+        "weighted_precision": weighted_precision,
+        "weighted_recall": weighted_recall,
+        "weighted_f1": weighted_f1,
+        "per_class": per_class,
+        "confusion_matrix": matrix.astype(int).tolist(),
+    }
 
 
 def save_results_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
@@ -138,11 +199,12 @@ def make_stratified_folds(labels: list[str], n_splits: int, seed: int) -> list[t
     return folds
 
 
-def evaluate_single_split(train_vectors, train_labels, test_vectors, test_labels, k: int) -> tuple[float, list[str]]:
+def evaluate_single_split(train_vectors, train_labels, test_vectors, test_labels, k: int) -> tuple[float, list[str], dict[str, Any]]:
     train_scaled, test_scaled, _ = standardize_feature_matrices(train_vectors, test_vectors)
     preds = knn_predict(train_scaled, train_labels, test_scaled, k=k)
     predicted_labels = [item["predicted_label"] for item in preds]
-    return float(compute_accuracy(test_labels, predicted_labels)), predicted_labels
+    metrics = compute_classification_metrics(test_labels, predicted_labels)
+    return float(compute_accuracy(test_labels, predicted_labels)), predicted_labels, metrics
 
 
 def run_grid_search(vectors: np.ndarray, labels: list[str], *, k_values: list[int], fold_values: list[int], seed: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -154,25 +216,37 @@ def run_grid_search(vectors: np.ndarray, labels: list[str], *, k_values: list[in
             continue
         for k in sorted({int(v) for v in k_values if int(v) >= 1}):
             fold_scores = []
+            fold_macro_f1 = []
+            fold_weighted_f1 = []
             for train_idx, val_idx in split_folds:
-                acc, _ = evaluate_single_split(
+                _, _, metrics = evaluate_single_split(
                     vectors[train_idx],
                     [labels[i] for i in train_idx],
                     vectors[val_idx],
                     [labels[i] for i in val_idx],
                     k,
                 )
-                fold_scores.append(acc)
+                fold_scores.append(metrics["accuracy"])
+                fold_macro_f1.append(metrics["macro_f1"])
+                fold_weighted_f1.append(metrics["weighted_f1"])
             row = {
                 "folds": int(len(split_folds)),
                 "requested_folds": int(folds),
                 "k": int(k),
                 "mean_validation_accuracy": float(np.mean(fold_scores, dtype=np.float64)),
                 "std_validation_accuracy": float(np.std(fold_scores, dtype=np.float64)),
+                "mean_validation_macro_f1": float(np.mean(fold_macro_f1, dtype=np.float64)),
+                "mean_validation_weighted_f1": float(np.mean(fold_weighted_f1, dtype=np.float64)),
                 "fold_scores": [float(x) for x in fold_scores],
             }
             rows.append(row)
-            if best_row is None or (row["mean_validation_accuracy"], -row["k"], row["folds"]) > (
+            if best_row is None or (
+                row["mean_validation_macro_f1"],
+                row["mean_validation_accuracy"],
+                -row["k"],
+                row["folds"],
+            ) > (
+                best_row["mean_validation_macro_f1"],
                 best_row["mean_validation_accuracy"],
                 -best_row["k"],
                 best_row["folds"],
@@ -183,26 +257,86 @@ def run_grid_search(vectors: np.ndarray, labels: list[str], *, k_values: list[in
     return rows, best_row
 
 
-def plot_best_model(path: Path, validation_grid_rows: list[dict[str, Any]], test_accuracy_rows: list[dict[str, Any]], *, best_k: int, best_folds: int, title_prefix: str) -> None:
+def compute_pca(feature_vectors: np.ndarray, n_dims: int = 2) -> PcaResult:
+    vectors = np.asarray(feature_vectors, dtype=np.float32)
+    if vectors.ndim != 2:
+        raise ValueError("feature_vectors must be a 2D array.")
+    if vectors.shape[0] == 0:
+        return PcaResult(coordinates=np.zeros((0, n_dims), dtype=np.float32), explained_variance_ratio=np.zeros(0, dtype=np.float32))
+    centered = vectors - np.mean(vectors, axis=0, keepdims=True, dtype=np.float64)
+    scale = np.std(centered, axis=0, keepdims=True, dtype=np.float64)
+    scale[scale < 1e-8] = 1.0
+    normalized = centered / scale
+    _, singular_values, vt = np.linalg.svd(normalized, full_matrices=False)
+    actual_dims = min(n_dims, vt.shape[0])
+    components = vt[:actual_dims].T
+    variances = (singular_values ** 2) / max(1, normalized.shape[0] - 1)
+    variance_ratio = variances / max(float(np.sum(variances)), 1e-12)
+    coordinates = (normalized @ components).astype(np.float32)
+    if actual_dims < n_dims:
+        padded = np.zeros((coordinates.shape[0], n_dims), dtype=np.float32)
+        padded[:, :actual_dims] = coordinates
+        coordinates = padded
+    return PcaResult(coordinates=coordinates, explained_variance_ratio=np.asarray(variance_ratio, dtype=np.float32))
+
+
+def plot_feature_distribution(path: Path, vectors: np.ndarray, labels: list[str], title: str) -> None:
+    pca = compute_pca(vectors, n_dims=2)
+    coordinates = pca.coordinates
+    variance = pca.explained_variance_ratio
+    unique_labels = sorted(set(labels))
+    cmap = plt.get_cmap("tab10")
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for index, label in enumerate(unique_labels):
+        mask = np.asarray([item == label for item in labels], dtype=bool)
+        if not np.any(mask):
+            continue
+        ax.scatter(
+            coordinates[mask, 0],
+            coordinates[mask, 1],
+            s=60,
+            alpha=0.82,
+            color=cmap(index % 10),
+            label=label,
+        )
+    x_label = f"PC1 ({variance[0] * 100.0:.1f}%)" if variance.size >= 1 else "PC1"
+    y_label = f"PC2 ({variance[1] * 100.0:.1f}%)" if variance.size >= 2 else "PC2"
+    ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.grid(alpha=0.25)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def plot_best_model(path: Path, validation_grid_rows: list[dict[str, Any]], test_metric_rows: list[dict[str, Any]], *, best_k: int, best_folds: int, title_prefix: str) -> None:
     val_rows = [row for row in validation_grid_rows if row["folds"] == best_folds]
     val_rows = sorted(val_rows, key=lambda row: row["k"])
-    test_rows = sorted(test_accuracy_rows, key=lambda row: row["k"])
+    test_rows = sorted(test_metric_rows, key=lambda row: row["k"])
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    axes[0].plot([r["k"] for r in val_rows], [r["mean_validation_accuracy"] * 100 for r in val_rows], marker="o", label="Validation")
+    axes[0].plot([r["k"] for r in val_rows], [r["mean_validation_accuracy"] * 100 for r in val_rows], marker="o", label="Validation accuracy")
+    axes[0].plot([r["k"] for r in val_rows], [r["mean_validation_macro_f1"] * 100 for r in val_rows], marker="^", label="Validation macro-F1")
     axes[0].axvline(best_k, color="tab:red", linestyle="--", alpha=0.7)
-    axes[0].set_title(f"{title_prefix} validation accuracy")
+    axes[0].set_title(f"{title_prefix} validation metrics")
     axes[0].set_xlabel("k")
-    axes[0].set_ylabel("Accuracy (%)")
+    axes[0].set_ylabel("Score (%)")
     axes[0].grid(alpha=0.3)
+    axes[0].legend()
 
-    axes[1].plot([r["k"] for r in test_rows], [r["test_accuracy"] * 100 for r in test_rows], marker="s", color="tab:green", label="Test")
+    axes[1].plot([r["k"] for r in test_rows], [r["accuracy"] * 100 for r in test_rows], marker="s", color="tab:green", label="Test accuracy")
+    axes[1].plot([r["k"] for r in test_rows], [r["macro_f1"] * 100 for r in test_rows], marker="D", color="tab:orange", label="Test macro-F1")
     axes[1].axvline(best_k, color="tab:red", linestyle="--", alpha=0.7)
-    axes[1].set_title(f"{title_prefix} test accuracy")
+    axes[1].set_title(f"{title_prefix} test metrics")
     axes[1].set_xlabel("k")
-    axes[1].set_ylabel("Accuracy (%)")
+    axes[1].set_ylabel("Score (%)")
     axes[1].grid(alpha=0.3)
+    axes[1].legend()
 
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,8 +370,10 @@ def print_grid_rows(name: str, rows: list[dict[str, Any]]) -> None:
     for row in sorted(rows, key=lambda r: (r["folds"], r["k"])):
         scores = ", ".join(f"{x:.3f}" for x in row["fold_scores"])
         print(
-            f"  folds={row['folds']}, k={row['k']}: "
-            f"val_mean={row['mean_validation_accuracy']:.3f}, "
+            f" folds={row['folds']}, k={row['k']}: "
+            f"val_acc={row['mean_validation_accuracy']:.3f}, "
+            f"val_macro_f1={row['mean_validation_macro_f1']:.3f}, "
+            f"val_weighted_f1={row['mean_validation_weighted_f1']:.3f}, "
             f"val_std={row['std_validation_accuracy']:.3f}, "
             f"fold_scores=[{scores}]"
         )
@@ -265,9 +401,15 @@ def main() -> int:
     reset_output_root(output_root, force=bool(args.force))
 
     base_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, base_source_root)
+    base_parts_aug = build_augmented_feature_parts(
+        base_parts,
+        project_root=PROJECT_ROOT,
+        config=AugmentationConfig(copies_per_sample=3),
+        seed=42,
+    )
     dynamic_parts = load_sample_feature_parts_from_root(PROJECT_ROOT, dynamic_source_root)
 
-    base_vectors, base_labels = build_keyword_matrix(base_parts)
+    base_vectors, base_labels = build_keyword_matrix(base_parts_aug)
 
     dynamic_label_map = {dynamic_key(item): item.record.keyword for item in dynamic_parts}
     dynamic_delta_map = build_dynamic_delta_map(dynamic_parts, PROJECT_ROOT)
@@ -276,6 +418,9 @@ def main() -> int:
         label_map=dynamic_label_map,
         delta_map=dynamic_delta_map,
     )
+
+    plot_feature_distribution(output_root / "base_feature_distribution.png", base_vectors, base_labels, "Base feature distribution (PCA scatter)")
+    plot_feature_distribution(output_root / "dynamic_feature_distribution.png", dynamic_vectors, dynamic_labels, "Dynamic feature distribution (PCA scatter)")
 
     base_train_idx, base_test_idx, base_split_counts = split_indices_by_label(base_labels, float(args.test_ratio), int(args.seed))
     dyn_train_idx, dyn_test_idx, dyn_split_counts = split_indices_by_label(dynamic_labels, float(args.test_ratio), int(args.seed))
@@ -303,52 +448,97 @@ def main() -> int:
     print_grid_rows("Dynamic", dynamic_grid_rows)
 
     base_test_rows = []
+    base_best_preds: list[str] = []
+    base_best_metrics: dict[str, Any] = {}
     for k in base_k_values:
-        test_acc, preds = evaluate_single_split(
+        _, preds, metrics = evaluate_single_split(
             base_vectors[base_train_idx],
             [base_labels[i] for i in base_train_idx],
             base_vectors[base_test_idx],
             [base_labels[i] for i in base_test_idx],
             k,
         )
-        base_test_rows.append({"k": int(k), "test_accuracy": float(test_acc)})
+        base_test_rows.append(
+            {
+                "k": int(k),
+                "accuracy": float(metrics["accuracy"]),
+                "macro_precision": float(metrics["macro_precision"]),
+                "macro_recall": float(metrics["macro_recall"]),
+                "macro_f1": float(metrics["macro_f1"]),
+                "weighted_precision": float(metrics["weighted_precision"]),
+                "weighted_recall": float(metrics["weighted_recall"]),
+                "weighted_f1": float(metrics["weighted_f1"]),
+            }
+        )
         if k == base_best["k"]:
             base_best_preds = preds
+            base_best_metrics = metrics
 
     dynamic_test_rows = []
+    dynamic_best_preds: list[str] = []
+    dynamic_best_metrics: dict[str, Any] = {}
     for k in dynamic_k_values:
-        test_acc, preds = evaluate_single_split(
+        _, preds, metrics = evaluate_single_split(
             dynamic_vectors[dyn_train_idx],
             [dynamic_labels[i] for i in dyn_train_idx],
             dynamic_vectors[dyn_test_idx],
             [dynamic_labels[i] for i in dyn_test_idx],
             k,
         )
-        dynamic_test_rows.append({"k": int(k), "test_accuracy": float(test_acc)})
+        dynamic_test_rows.append(
+            {
+                "k": int(k),
+                "accuracy": float(metrics["accuracy"]),
+                "macro_precision": float(metrics["macro_precision"]),
+                "macro_recall": float(metrics["macro_recall"]),
+                "macro_f1": float(metrics["macro_f1"]),
+                "weighted_precision": float(metrics["weighted_precision"]),
+                "weighted_recall": float(metrics["weighted_recall"]),
+                "weighted_f1": float(metrics["weighted_f1"]),
+            }
+        )
         if k == dynamic_best["k"]:
             dynamic_best_preds = preds
+            dynamic_best_metrics = metrics
 
     base_test_labels = [base_labels[i] for i in base_test_idx]
     dynamic_test_labels = [dynamic_labels[i] for i in dyn_test_idx]
 
-    base_conf_labels = sorted(set(base_test_labels) | set(base_best_preds))
-    dynamic_conf_labels = sorted(set(dynamic_test_labels) | set(dynamic_best_preds))
-
-    base_conf = confusion_matrix_counts(base_test_labels, base_best_preds, base_conf_labels)
-    dynamic_conf = confusion_matrix_counts(dynamic_test_labels, dynamic_best_preds, dynamic_conf_labels)
+    base_conf_labels = base_best_metrics["labels"]
+    dynamic_conf_labels = dynamic_best_metrics["labels"]
+    base_conf = base_best_metrics["confusion_matrix"]
+    dynamic_conf = dynamic_best_metrics["confusion_matrix"]
 
     save_results_csv(
         output_root / "base_grid_search.csv",
         [{**row, "fold_scores": json.dumps(row["fold_scores"])} for row in base_grid_rows],
-        ["requested_folds", "folds", "k", "mean_validation_accuracy", "std_validation_accuracy", "fold_scores"],
+        ["requested_folds", "folds", "k", "mean_validation_accuracy", "std_validation_accuracy", "mean_validation_macro_f1", "mean_validation_weighted_f1", "fold_scores"],
     )
     save_results_csv(
         output_root / "dynamic_grid_search.csv",
         [{**row, "fold_scores": json.dumps(row["fold_scores"])} for row in dynamic_grid_rows],
-        ["requested_folds", "folds", "k", "mean_validation_accuracy", "std_validation_accuracy", "fold_scores"],
+        ["requested_folds", "folds", "k", "mean_validation_accuracy", "std_validation_accuracy", "mean_validation_macro_f1", "mean_validation_weighted_f1", "fold_scores"],
     )
-    save_results_csv(output_root / "base_test_accuracy.csv", base_test_rows, ["k", "test_accuracy"])
-    save_results_csv(output_root / "dynamic_test_accuracy.csv", dynamic_test_rows, ["k", "test_accuracy"])
+    save_results_csv(
+        output_root / "base_test_metrics.csv",
+        base_test_rows,
+        ["k", "accuracy", "macro_precision", "macro_recall", "macro_f1", "weighted_precision", "weighted_recall", "weighted_f1"],
+    )
+    save_results_csv(
+        output_root / "dynamic_test_metrics.csv",
+        dynamic_test_rows,
+        ["k", "accuracy", "macro_precision", "macro_recall", "macro_f1", "weighted_precision", "weighted_recall", "weighted_f1"],
+    )
+    save_results_csv(
+        output_root / "base_per_class_metrics.csv",
+        base_best_metrics["per_class"],
+        ["label", "precision", "recall", "f1", "support"],
+    )
+    save_results_csv(
+        output_root / "dynamic_per_class_metrics.csv",
+        dynamic_best_metrics["per_class"],
+        ["label", "precision", "recall", "f1", "support"],
+    )
     save_results_csv(
         output_root / "base_confusion_matrix.csv",
         [{"true_label": label, **{pred: count for pred, count in zip(base_conf_labels, row)}} for label, row in zip(base_conf_labels, base_conf)],
@@ -361,7 +551,7 @@ def main() -> int:
     )
 
     plot_best_model(
-        output_root / "base_best_model_accuracy.png",
+        output_root / "base_best_model_metrics.png",
         base_grid_rows,
         base_test_rows,
         best_k=base_best["k"],
@@ -369,7 +559,7 @@ def main() -> int:
         title_prefix="Base",
     )
     plot_best_model(
-        output_root / "dynamic_best_model_accuracy.png",
+        output_root / "dynamic_best_model_metrics.png",
         dynamic_grid_rows,
         dynamic_test_rows,
         best_k=dynamic_best["k"],
@@ -383,18 +573,23 @@ def main() -> int:
         "base": {
             "split_counts": base_split_counts,
             "best_model": base_best,
-            "test_accuracy_at_best_k": next(row["test_accuracy"] for row in base_test_rows if row["k"] == base_best["k"]),
+            "test_metrics_at_best_k": next(row for row in base_test_rows if row["k"] == base_best["k"]),
+            "per_class_metrics": base_best_metrics["per_class"],
             "confusion_labels": base_conf_labels,
             "confusion_matrix": base_conf,
+            "test_label_count": len(base_test_labels),
         },
         "dynamic": {
             "split_counts": dyn_split_counts,
             "best_model": dynamic_best,
-            "test_accuracy_at_best_k": next(row["test_accuracy"] for row in dynamic_test_rows if row["k"] == dynamic_best["k"]),
+            "test_metrics_at_best_k": next(row for row in dynamic_test_rows if row["k"] == dynamic_best["k"]),
+            "per_class_metrics": dynamic_best_metrics["per_class"],
             "confusion_labels": dynamic_conf_labels,
             "confusion_matrix": dynamic_conf,
+            "test_label_count": len(dynamic_test_labels),
         },
     }
+
     with (output_root / "summary.json").open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2)
         handle.write("\n")
