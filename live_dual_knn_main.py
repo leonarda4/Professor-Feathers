@@ -16,6 +16,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from audio import MicrophoneStream, describe_default_input, read_wav
+from parrot_feedback import AudioFeedbackPlayer
 from collect import (
     RecordingBatch,
     build_endpointer,
@@ -41,8 +42,8 @@ BASE_UNKNOWN_DISTANCE_THRESHOLD = None
 BASE_UNKNOWN_DISTANCE_PERCENTILE = 95.0
 BASE_UNKNOWN_DISTANCE_MARGIN = 1.10
 DYNAMIC_UNKNOWN_DISTANCE_THRESHOLD = None
-DYNAMIC_UNKNOWN_DISTANCE_PERCENTILE = 97.0
-DYNAMIC_UNKNOWN_DISTANCE_MARGIN = 1.05
+DYNAMIC_UNKNOWN_DISTANCE_PERCENTILE = 99.0
+DYNAMIC_UNKNOWN_DISTANCE_MARGIN = 1.10
 BASE_MIN_LABEL_VOTE_RATIO = 0.80
 LEARN_DANCE_KEY = "d"
 LEARN_SING_KEY = "s"
@@ -53,6 +54,8 @@ DANCE_ACTION_LABEL = "dance"
 SING_ACTION_LABEL = "sing"
 DANCE_PREFIX = "dance"
 SING_PREFIX = "sing"
+PARROT_FEEDBACK_ROOT = PROJECT_ROOT / "data" / "parrot_voice"
+DANCE_FEEDBACK_PROBABILITY = 0.45
 
 
 @dataclass
@@ -286,10 +289,11 @@ def predict_dynamic_command(
     prediction = model.dynamic_classifier.predict(parts, delta_mfcc_mean=delta)
     mean_neighbor_distance = model.dynamic_classifier.mean_neighbor_distance(parts, delta_mfcc_mean=delta)
     closest_label = str(prediction["predicted_label"])
+    action_label = _infer_action_label(closest_label)
     is_known = mean_neighbor_distance <= model.dynamic_unknown_distance_threshold
     return DynamicPrediction(
         is_known=bool(is_known),
-        action_label=closest_label if is_known else None,
+        action_label=action_label if is_known else None,
         closest_label=closest_label,
         mean_neighbor_distance=float(mean_neighbor_distance),
         unknown_distance_threshold=float(model.dynamic_unknown_distance_threshold),
@@ -376,6 +380,7 @@ def run_live_dual_classification(
     config,
     project_root: Path,
 ) -> int:
+    feedback = AudioFeedbackPlayer(PARROT_FEEDBACK_ROOT, rng_seed=42, dance_trigger_probability=DANCE_FEEDBACK_PROBABILITY)
     sample_rate = int(config.audio.sample_rate)
     endpointer = build_endpointer(config)
     _, manifest_path = ensure_storage(
@@ -407,6 +412,7 @@ def run_live_dual_classification(
         f"Dual KNN live classification is ready. base_k={model.base_classifier.k}, dynamic_k={DYNAMIC_K}, "
         f"base_training_samples={len(model.base_classifier._train_labels)}, dynamic_training_samples={dynamic_count}."
     )
+    print(f"Parrot feedback clips: {feedback.available_summary()}")
     print(
         f"Base unknown threshold: mean {model.base_classifier.k}-NN distance <= "
         f"{model.base_unknown_distance_threshold:.3f}"
@@ -498,6 +504,7 @@ def run_live_dual_classification(
                             f"mapped to {current_learning.action_label} ({completed}/{current_learning.batch.total})"
                         )
                         if not is_complete:
+                            feedback.maybe_play_training()
                             endpointer.arm()
                             continue
                         print(
@@ -515,6 +522,7 @@ def run_live_dual_classification(
                     _print_base_prediction(base_prediction, k=model.base_classifier.k)
                     if base_prediction.is_known and base_prediction.predicted_label is not None:
                         _perform_action(base_prediction.predicted_label)
+                        feedback.maybe_play_recognized(base_prediction.predicted_label)
                         print("Ready for the next word.")
                         print("")
                         endpointer.arm()
@@ -524,6 +532,9 @@ def run_live_dual_classification(
                     _print_dynamic_prediction(dynamic_prediction, k=DYNAMIC_K)
                     if dynamic_prediction.is_known and dynamic_prediction.action_label is not None:
                         _perform_action(dynamic_prediction.action_label)
+                        feedback.maybe_play_recognized(dynamic_prediction.action_label)
+                    elif not dynamic_prediction.is_known:
+                        feedback.play_not_recognized()
                     endpointer.arm()
     finally:
         listener.stop()
