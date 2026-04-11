@@ -18,13 +18,12 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from feature_core import (  # noqa: E402
+from features.feature_core import (  # noqa: E402
     build_feature_matrix,
     split_keyword_label,
 )
-from feature_loading import load_sample_feature_parts_from_root  # noqa: E402
+from features.feature_loading import load_sample_feature_parts_from_root  # noqa: E402
 from knn_utils import (  # noqa: E402
-    choose_knn_label,
     compute_accuracy,
     knn_predict,
     standardize_feature_matrices,

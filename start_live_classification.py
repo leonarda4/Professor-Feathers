@@ -25,12 +25,12 @@ from collect import (
     start_hotkey_listener,
 )
 from config import load_app_config
-from feature_core import (
+from features.feature_core import (
     build_feature_matrix,
     build_feature_vector_from_parts,
     extract_feature_parts,
 )
-from feature_loading import load_sample_feature_parts_from_root
+from features.feature_loading import load_sample_feature_parts_from_root
 from knn_utils import choose_knn_label, knn_predict, standardize_feature_matrices
 from storage import SampleRecord, ensure_storage
 
