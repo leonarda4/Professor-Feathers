@@ -1,0 +1,92 @@
+{
+  "base": {
+    "split_counts": {
+      "dance": {
+        "train": 1027,
+        "test": 257
+      },
+      "sing": {
+        "train": 960,
+        "test": 240
+      }
+    },
+    "best_model": {
+      "folds": 3,
+      "requested_folds": 3,
+      "k": 1,
+      "mean_validation_accuracy": 0.9949670316650945,
+      "std_validation_accuracy": 0.0018846283930454239,
+      "fold_scores": [
+        0.995475113122172,
+        0.9969788519637462,
+        0.9924471299093656
+      ]
+    },
+    "test_accuracy_at_best_k": 0.993963782696177,
+    "confusion_labels": [
+      "dance",
+      "sing"
+    ],
+    "confusion_matrix": [
+      [
+        255,
+        2
+      ],
+      [
+        1,
+        239
+      ]
+    ]
+  },
+  "dynamic": {
+    "split_counts": {
+      "dance_001": {
+        "train": 16,
+        "test": 4
+      },
+      "dance_002": {
+        "train": 16,
+        "test": 4
+      },
+      "sing_001": {
+        "train": 16,
+        "test": 4
+      }
+    },
+    "best_model": {
+      "folds": 3,
+      "requested_folds": 3,
+      "k": 1,
+      "mean_validation_accuracy": 0.9814814814814815,
+      "std_validation_accuracy": 0.026189140043946214,
+      "fold_scores": [
+        0.9444444444444444,
+        1.0,
+        1.0
+      ]
+    },
+    "test_accuracy_at_best_k": 1.0,
+    "confusion_labels": [
+      "dance_001",
+      "dance_002",
+      "sing_001"
+    ],
+    "confusion_matrix": [
+      [
+        4,
+        0,
+        0
+      ],
+      [
+        0,
+        4,
+        0
+      ],
+      [
+        0,
+        0,
+        4
+      ]
+    ]
+  }
+}

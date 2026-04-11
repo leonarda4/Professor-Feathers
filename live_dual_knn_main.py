@@ -31,7 +31,7 @@ from features.feature_core import extract_feature_parts
 from features.feature_loading import load_sample_feature_parts_from_root
 from features.feature_spaces import compute_delta_mfcc_mean
 from storage import SampleRecord, ensure_storage
-
+from data_augmentation import build_augmented_feature_parts, AugmentationConfig
 
 CONFIG_PATH = None
 BASE_KEYWORD_SOURCE_ROOT = PROJECT_ROOT / "data" / "base_keywords"
@@ -39,7 +39,7 @@ DYNAMIC_KEYWORD_SOURCE_ROOT = PROJECT_ROOT / "data" / "dynamic_keywords"
 BASE_K = 5
 DYNAMIC_K = 3
 BASE_UNKNOWN_DISTANCE_THRESHOLD = None
-BASE_UNKNOWN_DISTANCE_PERCENTILE = 95.0
+BASE_UNKNOWN_DISTANCE_PERCENTILE = 94.0
 BASE_UNKNOWN_DISTANCE_MARGIN = 1.10
 DYNAMIC_UNKNOWN_DISTANCE_THRESHOLD = None
 DYNAMIC_UNKNOWN_DISTANCE_PERCENTILE = 99.0
@@ -208,7 +208,13 @@ def prepare_dual_live_model(
     base_parts = load_sample_feature_parts_from_root(project_root, base_source_root)
     if not base_parts:
         raise ValueError(f"No base keyword samples found under {base_source_root}")
-    base_classifier = KeywordClassifier(k=BASE_K).fit(base_parts)
+    base_parts_aug = build_augmented_feature_parts(
+        base_parts,
+        project_root=PROJECT_ROOT,
+        config=AugmentationConfig(copies_per_sample=3),
+        seed=42,
+    )
+    base_classifier = KeywordClassifier(k=BASE_K).fit(base_parts_aug)
     base_classifier = base_classifier.fit(base_parts)
     base_unknown_distance_threshold = (
         float(BASE_UNKNOWN_DISTANCE_THRESHOLD)

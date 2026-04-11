@@ -1,0 +1,4 @@
+label,precision,recall,f1,support
+dance_001,1.0,1.0,1.0,4
+dance_002,1.0,1.0,1.0,4
+sing_001,1.0,1.0,1.0,4
