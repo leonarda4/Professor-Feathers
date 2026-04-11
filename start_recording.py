@@ -14,7 +14,7 @@ from config import load_app_config
 
 
 # Edit these values before running this file from the IDE.
-KEYWORD = "dance12"
+KEYWORD = "parrot1"
 CONFIG_PATH = None
 ARM_KEY = None
 QUIT_KEY = None
