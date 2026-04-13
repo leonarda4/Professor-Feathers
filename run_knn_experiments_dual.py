@@ -32,7 +32,7 @@ from knn_utils import compute_accuracy, knn_predict, standardize_feature_matrice
 
 DEFAULT_BASE_SOURCE_ROOT = PROJECT_ROOT / "data" / "base_keywords"
 DEFAULT_DYNAMIC_SOURCE_ROOT = PROJECT_ROOT / "data" / "dynamic_keywords"
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "knn_experiments_dual"
+DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "knn_experiments_dual3"
 DEFAULT_BASE_K_VALUES = [1, 3, 5, 7, 9, 11]
 DEFAULT_DYNAMIC_K_VALUES = [1, 3, 5, 7]
 DEFAULT_CV_FOLDS = [3, 5]

@@ -21,12 +21,14 @@ The current design uses two feature spaces on purpose: the base classifier uses 
 Professor-Feathers/
 ├── src/
     ├── audio.py
+    ├── base_svm.py
     ├── collect.py
     ├── config.py
     ├── dual_knn.py
     ├── endpointer.py
     ├── parrot_feedback.py
     ├── storage.py
+    ├── knn_utils.py
     ├── servo/
         ├── servo_rcv.ino
         ├── servo_snd.py
@@ -35,8 +37,7 @@ Professor-Feathers/
         ├── feature_loading.py
         ├── feature_plotting.py
         └── feature_spaces.py
-    ├── knn_utils.py
-├── live_dual_knn_main.py
+├── live_main.py
 ├── run_knn_experiments.py
 ├── run_knn_experiments_dual.py
 ├── show_feature_space.py
@@ -46,9 +47,12 @@ Professor-Feathers/
 └── data/
     ├── base_keywords/
     ├── dynamic_keywords/
+    ├── base_model_compare/
     ├── parrot_voice/
     ├── manifests/
     ├── knn_experiments/
+    ├── features/
+    ├── manifests/
     └── raw/
 ```
 
@@ -65,13 +69,16 @@ Professor-Feathers/
 - `knn_utils.py` — standardization, neighbor search, and shared KNN evaluation helpers.
 - `dual_knn.py` — model classes for the live dual-classifier flow.
 - `parrot_feedback.py` — randomized playback of parrot feedback WAV files for recognized commands, failed recognition, and training prompts.
+- `base_svm` — SVM class for comparison with 
 
 ### Main scripts
 
-- `live_dual_knn_main.py` — main live interaction loop for continuous listening, recognition, learning, and action triggering.
+- `live_main.py` — main live interaction loop for continuous listening, recognition, learning, and action triggering.
+- `run_knn_classifier.py` — earlier main interaction loop running on a single knn classifier. 
 - `run_knn_experiments.py` — earlier KNN experiment script for feature variants and `k` search on a single classifier setup.
 - `run_knn_experiments_dual.py` — offline evaluation for both base and dynamic classifiers with stratified folds, test splits, and confusion matrices.
 - `start_recording.py` - live recording of utterances for the first classifier's training.
+- `show_feature_space.py` - offline plotting and logging script to analyze the feature space.
 
 ## Data layout
 
@@ -183,7 +190,7 @@ This script evaluates the base and dynamic classifiers separately, performs stra
 Example:
 
 ```bash
-python live_dual_knn_main.py
+python live_main.py
 ```
 
 In the live system:

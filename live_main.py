@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,14 +45,15 @@ BASE_SVM_GAMMA = "scale"
 BASE_SVM_MARGIN_THRESHOLD = 0.45
 DYNAMIC_K = 3
 BASE_UNKNOWN_DISTANCE_THRESHOLD = None
-BASE_UNKNOWN_DISTANCE_PERCENTILE = 95.0
-BASE_UNKNOWN_DISTANCE_MARGIN = 1.10
+BASE_UNKNOWN_DISTANCE_PERCENTILE = 96.0
+BASE_UNKNOWN_DISTANCE_MARGIN = 1.05
 DYNAMIC_UNKNOWN_DISTANCE_THRESHOLD = None
-DYNAMIC_UNKNOWN_DISTANCE_PERCENTILE = 99.0
+DYNAMIC_UNKNOWN_DISTANCE_PERCENTILE = 97.0
 DYNAMIC_UNKNOWN_DISTANCE_MARGIN = 1.10
 BASE_MIN_LABEL_VOTE_RATIO = 0.80
 LEARN_DANCE_KEY = "d"
 LEARN_SING_KEY = "s"
+DELETE_DYNAMIC_KEYWORDS_KEY = "x"
 QUIT_KEY = None
 DRY_RUN = False
 USE_DELTA_FOR_DYNAMIC_KNN = True
@@ -61,6 +63,8 @@ DANCE_PREFIX = "dance"
 SING_PREFIX = "sing"
 PARROT_FEEDBACK_ROOT = PROJECT_ROOT / "data" / "parrot_voice"
 DANCE_FEEDBACK_PROBABILITY = 0.45
+MAX_DYNAMIC_KEYWORDS = 20
+REQUIRE_DELETE_CONFIRMATION = True
 
 
 @dataclass
@@ -152,6 +156,29 @@ def _build_dynamic_delta_map(sample_parts, project_root: Path) -> dict[str, np.n
     return delta_map
 
 
+def _count_dynamic_keyword_folders(source_root: Path) -> int:
+    source_root = Path(source_root).resolve()
+    if not source_root.exists():
+        return 0
+    return sum(1 for child in source_root.iterdir() if child.is_dir())
+
+
+def _can_start_new_dynamic_keyword(source_root: Path) -> bool:
+    return _count_dynamic_keyword_folders(source_root) < int(MAX_DYNAMIC_KEYWORDS)
+
+
+def _delete_dynamic_keyword_dataset(source_root: Path) -> None:
+    source_root = Path(source_root).resolve()
+    if not source_root.exists():
+        source_root.mkdir(parents=True, exist_ok=True)
+        return
+    for child in source_root.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        elif child.is_file():
+            child.unlink()
+
+
 def prepare_dynamic_classifier(project_root: Path, dynamic_source_root: Path):
     dynamic_parts = []
     if Path(dynamic_source_root).exists():
@@ -228,10 +255,11 @@ def _next_anonymous_keyword(source_root: Path, prefix: str) -> str:
     pattern = re.compile(rf"^{re.escape(prefix)}_(\d+)$")
     max_serial = 0
     for child in source_root.iterdir():
-        if child.is_dir():
-            match = pattern.match(child.name.strip())
-            if match:
-                max_serial = max(max_serial, int(match.group(1)))
+        if not child.is_dir():
+            continue
+        match = pattern.match(child.name.strip())
+        if match:
+            max_serial = max(max_serial, int(match.group(1)))
     return f"{prefix}_{max_serial + 1:03d}"
 
 
@@ -240,10 +268,9 @@ def _begin_learning_batch(*, source_root: Path, action_label: str, batch_size: i
     return start_recording_batch(_next_anonymous_keyword(source_root, prefix), batch_size=batch_size)
 
 
-def _reload_model(model: DualLiveModel):
-    print("Rebuilding classifiers with the updated datasets...")
-    retrained_clf = prepare_dynamic_classifier(project_root=PROJECT_ROOT, dynamic_source_root=model.dynamic_source_root)[0]
-    return retrained_clf
+def _reload_dynamic_model(model: DualLiveModel) -> None:
+    print("Rebuilding dynamic classifier with the updated dataset...")
+    model.dynamic_classifier, model.dynamic_unknown_distance_threshold = prepare_dynamic_classifier(project_root=PROJECT_ROOT, dynamic_source_root=model.dynamic_source_root)
 
 
 def _perform_action(action_label: str) -> None:
@@ -291,7 +318,16 @@ def run_live_dual_classification(*, model: DualLiveModel, config, project_root: 
     _, manifest_path = ensure_storage(project_root=project_root, data_dir=config.storage.data_dir, manifest_path=config.storage.manifest_path)
     dynamic_root = Path(model.dynamic_source_root).resolve()
     hotkey_events: "queue.Queue[str]" = queue.Queue()
-    listener = start_hotkey_listener(hotkey_events, arm_key=None, quit_key=config.collection.quit_key, extra_actions={LEARN_DANCE_KEY: "learn_dance", LEARN_SING_KEY: "learn_sing"})
+    listener = start_hotkey_listener(
+        hotkey_events,
+        arm_key=None,
+        quit_key=config.collection.quit_key,
+        extra_actions={
+            LEARN_DANCE_KEY: "learn_dance",
+            LEARN_SING_KEY: "learn_sing",
+            DELETE_DYNAMIC_KEYWORDS_KEY: "delete_dynamic_keywords",
+        },
+    )
     current_learning: Optional[LearningContext] = None
     default_device = describe_default_input()
     if default_device:
@@ -299,13 +335,14 @@ def run_live_dual_classification(*, model: DualLiveModel, config, project_root: 
     dynamic_count = 0 if model.dynamic_classifier is None else len(model.dynamic_classifier._train_labels)
     print(f"Live classification is ready. base_model_type={model.base_model_type}, dynamic_k={DYNAMIC_K}, base_training_samples={len(model.base_classifier._train_labels)}, dynamic_training_samples={dynamic_count}.")
     print(f"Parrot feedback clips: {feedback.available_summary()}")
+    print(f"Dynamic keyword folders: {_count_dynamic_keyword_folders(dynamic_root)}/{MAX_DYNAMIC_KEYWORDS}")
     if model.base_model_type == "knn":
         print(f"Base unknown threshold: mean {model.base_classifier.k}-NN distance <= {model.base_unknown_distance_threshold:.3f}")
     else:
         print(f"Base classifier uses SVM with kernel={BASE_SVM_KERNEL}, C={BASE_SVM_C}, gamma={BASE_SVM_GAMMA}, margin_threshold={model.base_unknown_distance_threshold:.3f}")
     print(f"Dynamic unknown threshold: mean {DYNAMIC_K}-NN distance <= {model.dynamic_unknown_distance_threshold:.3f}")
     print("System is waiting for either a spoken word or a key press.")
-    print(f"Press {LEARN_DANCE_KEY} to teach a new anonymous keyword mapped to dance, {LEARN_SING_KEY} to teach one mapped to sing, and {config.collection.quit_key} to quit.")
+    print(f"Press {LEARN_DANCE_KEY} to teach a new anonymous keyword mapped to dance, {LEARN_SING_KEY} to teach one mapped to sing, {DELETE_DYNAMIC_KEYWORDS_KEY} to delete all dynamic keywords, and {config.collection.quit_key} to quit.")
 
     try:
         with MicrophoneStream(sample_rate=sample_rate, channels=config.audio.channels, block_ms=config.audio.block_ms, device=config.audio.device) as microphone:
@@ -320,16 +357,31 @@ def run_live_dual_classification(*, model: DualLiveModel, config, project_root: 
                     if current_learning is not None:
                         print(f"Ignoring '{action}' while learning batch {current_learning.batch.keyword} is in progress.")
                         continue
-                    if action == "learn_dance":
-                        batch = _begin_learning_batch(source_root=dynamic_root, action_label=DANCE_ACTION_LABEL, batch_size=config.collection.batch_size)
-                        current_learning = LearningContext(action_label=DANCE_ACTION_LABEL, batch=batch)
-                        print(f"\nLearning new anonymous keyword {batch.keyword} mapped to {DANCE_ACTION_LABEL}. Speak {batch.total} examples.")
+                    if action in {"learn_dance", "learn_sing"}:
+                        if not _can_start_new_dynamic_keyword(dynamic_root):
+                            print(f"Dynamic keyword limit reached ({MAX_DYNAMIC_KEYWORDS}). Delete the current dynamic dataset before recording a new keyword.")
+                            continue
+                        if action == "learn_dance":
+                            batch = _begin_learning_batch(source_root=dynamic_root, action_label=DANCE_ACTION_LABEL, batch_size=config.collection.batch_size)
+                            current_learning = LearningContext(action_label=DANCE_ACTION_LABEL, batch=batch)
+                            print(f"\nLearning new anonymous keyword {batch.keyword} mapped to {DANCE_ACTION_LABEL}. Speak {batch.total} examples.")
+                        else:
+                            batch = _begin_learning_batch(source_root=dynamic_root, action_label=SING_ACTION_LABEL, batch_size=config.collection.batch_size)
+                            current_learning = LearningContext(action_label=SING_ACTION_LABEL, batch=batch)
+                            print(f"\nLearning new anonymous keyword {batch.keyword} mapped to {SING_ACTION_LABEL}. Speak {batch.total} examples.")
                         endpointer.arm()
-                    elif action == "learn_sing":
-                        batch = _begin_learning_batch(source_root=dynamic_root, action_label=SING_ACTION_LABEL, batch_size=config.collection.batch_size)
-                        current_learning = LearningContext(action_label=SING_ACTION_LABEL, batch=batch)
-                        print(f"\nLearning new anonymous keyword {batch.keyword} mapped to {SING_ACTION_LABEL}. Speak {batch.total} examples.")
-                        endpointer.arm()
+                        continue
+                    if action == "delete_dynamic_keywords":
+                        if REQUIRE_DELETE_CONFIRMATION:
+                            confirmation = input("Delete all dynamic keyword datasets? Type DELETE to confirm: ").strip()
+                            if confirmation != "DELETE":
+                                print("Dynamic dataset deletion cancelled.")
+                                continue
+                        _delete_dynamic_keyword_dataset(dynamic_root)
+                        _reload_dynamic_model(model)
+                        print("All dynamic keyword datasets were deleted. Dynamic classifier reset.")
+                        print(f"Dynamic keyword folders: {_count_dynamic_keyword_folders(dynamic_root)}/{MAX_DYNAMIC_KEYWORDS}")
+                        continue
                 chunk = microphone.read_block(timeout=0.1)
                 if chunk is None:
                     continue
@@ -348,10 +400,10 @@ def run_live_dual_classification(*, model: DualLiveModel, config, project_root: 
                             endpointer.arm()
                             continue
                         print(f"Finished learning batch {current_learning.batch.keyword} for action {current_learning.action_label}. Updating dynamic classifier.")
-                        model.dynamic_classifier = _reload_model(model)
+                        _reload_dynamic_model(model)
                         current_learning = None
                         endpointer.arm()
-                        print("Continuous listening resumed.\n")
+                        print(f"Continuous listening resumed. Dynamic keyword folders: {_count_dynamic_keyword_folders(dynamic_root)}/{MAX_DYNAMIC_KEYWORDS}\n")
                         continue
                     base_prediction = predict_base_command(model, event.audio, sample_rate)
                     _print_base_prediction(base_prediction, model_type=model.base_model_type, k=getattr(model.base_classifier, "k", 0))
@@ -382,7 +434,7 @@ def main() -> int:
     if DRY_RUN:
         dynamic_count = 0 if model.dynamic_classifier is None else len(model.dynamic_classifier._train_labels)
         dynamic_dim = 0 if model.dynamic_classifier is None or model.dynamic_classifier._train_vectors.size == 0 else model.dynamic_classifier._train_vectors.shape[1]
-        print(f"Dry run complete. base_model_type={model.base_model_type}, base_k={getattr(model.base_classifier, 'k', 'n/a')}, dynamic_k={DYNAMIC_K}, base_source_root={model.base_source_root}, dynamic_source_root={model.dynamic_source_root}, base_training_samples={len(model.base_classifier._train_labels)}, dynamic_training_samples={dynamic_count}, base_dim={model.base_classifier._train_vectors.shape[1]}, dynamic_dim={dynamic_dim}, base_unknown_threshold={model.base_unknown_distance_threshold:.3f}, dynamic_unknown_threshold={model.dynamic_unknown_distance_threshold:.3f}")
+        print(f"Dry run complete. base_model_type={model.base_model_type}, base_k={getattr(model.base_classifier, 'k', 'n/a')}, dynamic_k={DYNAMIC_K}, base_source_root={model.base_source_root}, dynamic_source_root={model.dynamic_source_root}, base_training_samples={len(model.base_classifier._train_labels)}, dynamic_training_samples={dynamic_count}, base_dim={model.base_classifier._train_vectors.shape[1]}, dynamic_dim={dynamic_dim}, base_unknown_threshold={model.base_unknown_distance_threshold:.3f}, dynamic_unknown_threshold={model.dynamic_unknown_distance_threshold:.3f}, dynamic_keyword_limit={MAX_DYNAMIC_KEYWORDS}")
         return 0
     return run_live_dual_classification(model=model, config=config, project_root=PROJECT_ROOT)
 
