@@ -158,7 +158,6 @@ def dance_sequence(
     song_path: Path = SONG_PATH,
     short_pause: float = SHORT_PAUSE,
 ) -> None:
-    play_wav_blocking(recognized_path)
     play_wav_async(song_path)
 
     try:

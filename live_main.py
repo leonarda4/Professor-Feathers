@@ -37,9 +37,9 @@ from features.feature_spaces import compute_delta_mfcc_mean
 from storage import SampleRecord, ensure_storage
 
 try:
-    from servo.servo_snd import run_dance_movement as _run_dance_movement
+    from servo.servo_snd import run_dance_sequence as _run_dance_sequence
 except Exception as exc:
-    _run_dance_movement = None
+    _run_dance_sequence = None
     _DANCE_MOVEMENT_IMPORT_ERROR: Exception | None = exc
 else:
     _DANCE_MOVEMENT_IMPORT_ERROR = None
@@ -78,7 +78,7 @@ PARROT_FEEDBACK_ROOT = PROJECT_ROOT / "data" / "parrot_voice"
 DANCE_FEEDBACK_PROBABILITY = 0.45
 MAX_DYNAMIC_KEYWORDS = 20
 REQUIRE_DELETE_CONFIRMATION = True
-FEEDBACK_RECOGNIZED_PAUSE_SECONDS = 3.5
+FEEDBACK_RECOGNIZED_PAUSE_SECONDS = 4.80
 FEEDBACK_NOT_RECOGNIZED_PAUSE_SECONDS = 2.20
 FEEDBACK_TRAINING_PAUSE_SECONDS = 2.20
 
@@ -478,15 +478,15 @@ def _reload_dynamic_model(model: DualLiveModel) -> None:
     )
 
 
-def _run_dance_movement_worker() -> None:
+def _run_dance_sequence_worker() -> None:
     global _dance_movement_thread
 
     try:
-        if _run_dance_movement is None:
+        if _run_dance_sequence is None:
             if _DANCE_MOVEMENT_IMPORT_ERROR is not None:
                 print(f"Dance movement is unavailable: {_DANCE_MOVEMENT_IMPORT_ERROR}")
             return
-        _run_dance_movement()
+        _run_dance_sequence()
     except Exception as exc:
         print(f"Dance movement failed: {exc}")
     finally:
@@ -497,7 +497,7 @@ def _run_dance_movement_worker() -> None:
 def _trigger_dance_movement() -> bool:
     global _dance_movement_thread
 
-    if _run_dance_movement is None:
+    if _run_dance_sequence is None:
         if _DANCE_MOVEMENT_IMPORT_ERROR is not None:
             print(f"Dance movement is unavailable: {_DANCE_MOVEMENT_IMPORT_ERROR}")
         return False
@@ -508,7 +508,7 @@ def _trigger_dance_movement() -> bool:
             return False
 
         _dance_movement_thread = threading.Thread(
-            target=_run_dance_movement_worker,
+            target=_run_dance_sequence_worker,
             name="dance-movement",
             daemon=True,
         )
