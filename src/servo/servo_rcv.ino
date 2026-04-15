@@ -3,8 +3,8 @@
 Servo servo1;
 Servo servo2;
 
-const int pin1 = 18;
-const int pin2 = 19;
+const int pin1 = 18; //left
+const int pin2 = 19; //right
 
 String input = "";
 

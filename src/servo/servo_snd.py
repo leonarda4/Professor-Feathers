@@ -1,27 +1,86 @@
+from __future__ import annotations
+
+import os
+import platform
 import time
-import shutil
-import subprocess
 from pathlib import Path
 
 import serial
+import sounddevice as sd
+from serial.tools import list_ports
+
+from audio import read_wav
 
 
-PORT = "/dev/cu.SLAB_USBtoUART"
 BAUDRATE = 115200
 
-SERVO_1_START = 50
+SERVO_1_START = 0
 SERVO_1_END = 130
 
-SERVO_2_START = 130
+SERVO_2_START = 180
 SERVO_2_END = 50
 
 MOVE_DELAY = 0.4
-SHORT_PAUSE = 1
-LONG_PAUSE = 2
+SHORT_PAUSE = 1.0
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RECOGNIZED_PATH = PROJECT_ROOT / "data" / "parrot_voice" / "dance_recognized.wav"
-SONG_PATH = PROJECT_ROOT / "data" / "parrot_voice" / "Dancing_in_september.mp3"
+SONG_PATH = PROJECT_ROOT / "data" / "parrot_voice" / "Dancing_in_september.wav"
+
+
+def detect_default_port() -> str:
+    env_port = os.environ.get("PARROT_SERIAL_PORT")
+    if env_port:
+        return env_port
+
+    ports = sorted(list_ports.comports(), key=lambda p: p.device)
+    if not ports:
+        raise RuntimeError(
+            "No serial ports found. Connect the device or set PARROT_SERIAL_PORT."
+        )
+
+    preferred_tokens = {
+        "Darwin": ["usbmodem", "usbserial", "tty.usb", "cu.usb"],
+        "Linux": ["ttyUSB", "ttyACM", "usbserial"],
+        "Windows": ["COM"],
+    }.get(platform.system(), [])
+
+    for port in ports:
+        device = port.device.lower()
+        description = (port.description or "").lower()
+
+        if any(token.lower() in device for token in preferred_tokens):
+            return port.device
+
+        if any(
+            token in description
+            for token in ("arduino", "usb serial", "cp210", "ch340", "esp32")
+        ):
+            return port.device
+
+    return ports[0].device
+
+
+def open_serial(port: str | None = None, baudrate: int = BAUDRATE) -> serial.Serial:
+    selected_port = port or detect_default_port()
+    ser = serial.Serial(selected_port, baudrate, timeout=1)
+    time.sleep(2.0)
+    return ser
+
+
+def play_wav_blocking(path: Path) -> None:
+    samples, sample_rate = read_wav(path)
+    sd.play(samples, samplerate=sample_rate, blocking=True)
+    sd.stop()
+
+
+def play_wav_async(path: Path) -> None:
+    samples, sample_rate = read_wav(path)
+    sd.play(samples, samplerate=sample_rate, blocking=False)
+
+
+def stop_wav_async() -> None:
+    sd.stop()
 
 
 def move(ser: serial.Serial, servo_name: str, angle: int) -> None:
@@ -93,56 +152,32 @@ def perform_dance_moves(
     move(ser, "s1", SERVO_1_START)
 
 
-
 def dance_sequence(
     ser: serial.Serial,
     recognized_path: Path = RECOGNIZED_PATH,
     song_path: Path = SONG_PATH,
     short_pause: float = SHORT_PAUSE,
 ) -> None:
-    afplay_path = shutil.which("afplay")
-    if afplay_path is None:
-        raise RuntimeError("macOS 'afplay' is required to play the dance song.")
-    if not recognized_path.is_file():
-        raise FileNotFoundError(f"Recognized clip not found: {recognized_path}")
-    if not song_path.is_file():
-        raise FileNotFoundError(f"Song file not found: {song_path}")
-
-    subprocess.run(
-        [afplay_path, str(recognized_path)],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    song_process = subprocess.Popen(
-        [afplay_path, str(song_path)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    play_wav_blocking(recognized_path)
+    play_wav_async(song_path)
 
     try:
         perform_dance_moves(ser, short_pause=short_pause)
-        song_process.wait()
-
+        sd.wait()
     finally:
-        if song_process.poll() is None:
-            song_process.terminate()
-            song_process.wait(timeout=1.0)
+        stop_wav_async()
 
 
-def run_dance_movement(port: str = PORT, baudrate: int = BAUDRATE) -> None:
-    ser = serial.Serial(port, baudrate, timeout=1)
-    time.sleep(2.0)
+def run_dance_movement(port: str | None = None, baudrate: int = BAUDRATE) -> None:
+    ser = open_serial(port=port, baudrate=baudrate)
     try:
         perform_dance_moves(ser)
     finally:
         ser.close()
 
 
-def run_dance_sequence(port: str = PORT, baudrate: int = BAUDRATE) -> None:
-    ser = serial.Serial(port, baudrate, timeout=1)
-    time.sleep(2.0)
+def run_dance_sequence(port: str | None = None, baudrate: int = BAUDRATE) -> None:
+    ser = open_serial(port=port, baudrate=baudrate)
     try:
         dance_sequence(ser)
     finally:

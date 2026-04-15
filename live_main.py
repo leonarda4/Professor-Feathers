@@ -44,6 +44,9 @@ except Exception as exc:
 else:
     _DANCE_MOVEMENT_IMPORT_ERROR = None
 
+from servo.servo_snd import open_serial
+
+BAUDRATE = 115200
 CONFIG_PATH = None
 BASE_KEYWORD_SOURCE_ROOT = PROJECT_ROOT / "data" / "base_keywords"
 DYNAMIC_KEYWORD_SOURCE_ROOT = PROJECT_ROOT / "data" / "dynamic_keywords"
@@ -842,6 +845,7 @@ def main() -> int:
         config.collection.quit_key = QUIT_KEY
 
     chosen_base_model = BASE_MODEL_TYPE
+    open_serial(baudrate=BAUDRATE)
     model = prepare_dual_live_model(
         project_root=PROJECT_ROOT,
         base_source_root=Path(BASE_KEYWORD_SOURCE_ROOT).resolve(),
