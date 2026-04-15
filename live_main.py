@@ -796,10 +796,10 @@ def run_live_dual_classification(*, model: DualLiveModel, config, project_root: 
                     )
 
                     if base_prediction.is_known and base_prediction.predicted_label is not None:
-                        _perform_action(base_prediction.predicted_label)
                         playback_started = feedback.maybe_play_recognized(
                             base_prediction.predicted_label
                         )
+                        _perform_action(base_prediction.predicted_label)
                         _play_feedback_and_pause(
                             microphone,
                             endpointer,
@@ -817,10 +817,10 @@ def run_live_dual_classification(*, model: DualLiveModel, config, project_root: 
                     _print_dynamic_prediction(dynamic_prediction, k=DYNAMIC_K)
 
                     if dynamic_prediction.is_known and dynamic_prediction.action_label is not None:
-                        _perform_action(dynamic_prediction.action_label)
                         playback_started = feedback.maybe_play_recognized(
                             dynamic_prediction.action_label
                         )
+                        _perform_action(dynamic_prediction.action_label)
                         _play_feedback_and_pause(
                             microphone,
                             endpointer,
