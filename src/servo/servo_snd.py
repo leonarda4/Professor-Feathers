@@ -9,15 +9,15 @@ import serial
 PORT = "/dev/cu.SLAB_USBtoUART"
 BAUDRATE = 115200
 
-SERVO_1_START = 120
-SERVO_1_END = 40
+SERVO_1_START = 50
+SERVO_1_END = 130
 
-SERVO_2_START = 40
-SERVO_2_END = 120
+SERVO_2_START = 130
+SERVO_2_END = 50
 
 MOVE_DELAY = 0.4
 SHORT_PAUSE = 1
-LONG_PAUSE = 1.6
+LONG_PAUSE = 2
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RECOGNIZED_PATH = PROJECT_ROOT / "data" / "parrot_voice" / "dance_recognized.wav"
@@ -61,6 +61,39 @@ def cycle_both(
     time.sleep(pause)
 
 
+def perform_dance_moves(
+    ser: serial.Serial,
+    *,
+    short_pause: float = SHORT_PAUSE,
+) -> None:
+    move_both(ser, SERVO_1_START, SERVO_2_START)
+    time.sleep(short_pause)
+
+    cycle_both(ser, pause=MOVE_DELAY)
+    time.sleep(short_pause)
+
+    move(ser, "s1", SERVO_1_END)
+    time.sleep(MOVE_DELAY)
+    move(ser, "s1", SERVO_1_START)
+
+    move(ser, "s2", SERVO_2_END)
+    time.sleep(MOVE_DELAY)
+    move(ser, "s2", SERVO_2_START)
+
+    move(ser, "s1", SERVO_1_END)
+    time.sleep(MOVE_DELAY)
+    move(ser, "s1", SERVO_1_START)
+
+    time.sleep(short_pause)
+    cycle_both(ser, pause=MOVE_DELAY)
+    time.sleep(short_pause)
+
+    move(ser, "s1", SERVO_1_END)
+    time.sleep(MOVE_DELAY)
+    move(ser, "s1", SERVO_1_START)
+
+
+
 def dance_sequence(
     ser: serial.Serial,
     recognized_path: Path = RECOGNIZED_PATH,
@@ -89,49 +122,22 @@ def dance_sequence(
     )
 
     try:
-        move_both(ser, SERVO_1_START, SERVO_2_START)
-        time.sleep(short_pause)
-
-        cycle_both(ser, pause=MOVE_DELAY)
-        time.sleep(short_pause)
-
-        move(ser, "s1", SERVO_1_END)
-        time.sleep(MOVE_DELAY)
-        move(ser, "s1", SERVO_1_START)
-
-        move(ser, "s2", SERVO_2_END)
-        time.sleep(MOVE_DELAY)
-        move(ser, "s2", SERVO_2_START)
-
-        move(ser, "s1", SERVO_1_END)
-        time.sleep(MOVE_DELAY)
-        move(ser, "s1", SERVO_1_START)
-
-        time.sleep(short_pause)
-        cycle_both(ser, pause=MOVE_DELAY)
-        time.sleep(LONG_PAUSE)
-
-        move(ser, "s1", SERVO_1_END)
-        time.sleep(MOVE_DELAY)
-        move(ser, "s1", SERVO_1_START)
-
-        time.sleep(short_pause)
-
-
-        cycle_both(ser, pause=MOVE_DELAY)
-        time.sleep(short_pause)
-
-
-
-
-
+        perform_dance_moves(ser, short_pause=short_pause)
         song_process.wait()
-        move_both(ser, SERVO_1_START, SERVO_2_START)
 
     finally:
         if song_process.poll() is None:
             song_process.terminate()
             song_process.wait(timeout=1.0)
+
+
+def run_dance_movement(port: str = PORT, baudrate: int = BAUDRATE) -> None:
+    ser = serial.Serial(port, baudrate, timeout=1)
+    time.sleep(2.0)
+    try:
+        perform_dance_moves(ser)
+    finally:
+        ser.close()
 
 
 def run_dance_sequence(port: str = PORT, baudrate: int = BAUDRATE) -> None:

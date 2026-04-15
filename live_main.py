@@ -4,6 +4,7 @@ import queue
 import re
 import shutil
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,14 @@ from features.feature_core import extract_feature_parts
 from features.feature_loading import load_sample_feature_parts_from_root
 from features.feature_spaces import compute_delta_mfcc_mean
 from storage import SampleRecord, ensure_storage
+
+try:
+    from servo.servo_snd import run_dance_movement as _run_dance_movement
+except Exception as exc:
+    _run_dance_movement = None
+    _DANCE_MOVEMENT_IMPORT_ERROR: Exception | None = exc
+else:
+    _DANCE_MOVEMENT_IMPORT_ERROR = None
 
 CONFIG_PATH = None
 BASE_KEYWORD_SOURCE_ROOT = PROJECT_ROOT / "data" / "base_keywords"
@@ -69,6 +78,9 @@ REQUIRE_DELETE_CONFIRMATION = True
 FEEDBACK_RECOGNIZED_PAUSE_SECONDS = 3.5
 FEEDBACK_NOT_RECOGNIZED_PAUSE_SECONDS = 2.20
 FEEDBACK_TRAINING_PAUSE_SECONDS = 2.20
+
+_DANCE_MOVEMENT_LOCK = threading.Lock()
+_dance_movement_thread: threading.Thread | None = None
 
 
 @dataclass
@@ -463,9 +475,49 @@ def _reload_dynamic_model(model: DualLiveModel) -> None:
     )
 
 
+def _run_dance_movement_worker() -> None:
+    global _dance_movement_thread
+
+    try:
+        if _run_dance_movement is None:
+            if _DANCE_MOVEMENT_IMPORT_ERROR is not None:
+                print(f"Dance movement is unavailable: {_DANCE_MOVEMENT_IMPORT_ERROR}")
+            return
+        _run_dance_movement()
+    except Exception as exc:
+        print(f"Dance movement failed: {exc}")
+    finally:
+        with _DANCE_MOVEMENT_LOCK:
+            _dance_movement_thread = None
+
+
+def _trigger_dance_movement() -> bool:
+    global _dance_movement_thread
+
+    if _run_dance_movement is None:
+        if _DANCE_MOVEMENT_IMPORT_ERROR is not None:
+            print(f"Dance movement is unavailable: {_DANCE_MOVEMENT_IMPORT_ERROR}")
+        return False
+
+    with _DANCE_MOVEMENT_LOCK:
+        if _dance_movement_thread is not None and _dance_movement_thread.is_alive():
+            print("Dance movement is already running. Skipping duplicate trigger.")
+            return False
+
+        _dance_movement_thread = threading.Thread(
+            target=_run_dance_movement_worker,
+            name="dance-movement",
+            daemon=True,
+        )
+        _dance_movement_thread.start()
+        return True
+
+
 def _perform_action(action_label: str) -> None:
     if action_label == DANCE_ACTION_LABEL:
         print("Parrot is dancing")
+        if _trigger_dance_movement():
+            print("Dance movement started.")
     elif action_label == SING_ACTION_LABEL:
         print("Parrot is singing")
 
